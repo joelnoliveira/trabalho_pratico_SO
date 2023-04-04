@@ -27,11 +27,10 @@ int main(int argc, char const *argv[]){
         perror("Cannot open SENSOR_PIPE for reading: ");
         exit(0);
     }
-    int value;
-    printf("Hello There!\n");
+    const char s[77];
     while (1){
-        if(read(sensor_fd,&value,sizeof(int))==-1)printf("Erro\n");
-        printf("Recived from pipe: %d\n",value);
+        if(read(sensor_fd,s,sizeof(s))==-1)printf("Erro\n");
+        printf("Recived from pipe: %s\n",s);
     }
     return 0;
 }

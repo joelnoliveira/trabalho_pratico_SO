@@ -37,7 +37,6 @@ int is_int(short int is_unsigned,const char string[]){
     return 1;
 }
 int main(int argc, char const *argv[]){
-    int i = is_int(1,"999999999999999999999999999");
-    printf("%d\n",i);
+    for (unsigned int i = 0; i < 4294967296; i++);
     return 0;
 }

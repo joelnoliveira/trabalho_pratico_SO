@@ -5,6 +5,10 @@
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
+#include <signal.h>
+
+unsigned int msg_count = 0;
+int fd;
 
 /// @brief checker will check if the string is whitin size limit wich are predefined and if it is alphanumeric
 /// @param accepts_underline if > 0 accpets non-alphanumeric character '_' 
@@ -41,6 +45,11 @@ int is_int(short int is_unsigned,const char string[]){
 
     return 1;
 }
+void sigtstp_handler(int signo){
+    close(fd);
+    printf("Total mensagens enviadas: %d\n",msg_count);
+    exit(0);
+}
 int main(int argc, char const *argv[]){
     /*
     *argv[1]= id;
@@ -64,18 +73,31 @@ int main(int argc, char const *argv[]){
    }
    
 
-   int value,fd,min,max,sleep_time;
+   int value,min,max,sleep_time;
+   struct sigaction new;
    min = atoi(argv[4]);
    max = atoi(argv[5]);
    sleep_time = atoi(argv[2]);
    srand(time(NULL));
+
+   new.sa_handler = sigtstp_handler;
+   new.sa_flags = 0;
+   sigaddset(&new.sa_mask,SIGTSTP);
+   sigaction(SIGTSTP,&new,NULL);
+
    if ((fd = open("SENSOR_PIPE", O_WRONLY)) < 0) {
         perror("Cannot open pipe for writing");
         exit(0);
-    }
+   }
+
+   char string[66];//tamanho max visto que tanto o id como a chave só podem ter no max 32 car cada um
+   sprintf(string,"%s#%s#",argv[1],argv[3]);
+   char temp[77];//tamanho da string + '\0' + 10 caracteres que são o max espaço possível ocupado por um unsigned int 
    while (1){
     value = (rand()%(max-min+1))+min;
-    write(fd,&value,sizeof(int));
+    sprintf(temp,"%s%d\0",string,value);
+    write(fd,&temp,strlen(temp)+1);//+1 por causa de '/0'
+    msg_count++;
     sleep(sleep_time);
    }
     return 0;
