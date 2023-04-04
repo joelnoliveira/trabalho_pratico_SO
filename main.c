@@ -1,37 +1,43 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
+#include <ctype.h>
+#include <string.h>
+#include <limits.h>
 
-#define SENSOR_PIPE "SENSOR_PIPE"
-#define CONSOLE_PIPE "CONSOLE_PIPE"
+int checker(short int accepts_underline,const char string[]){
+    int lenght = strlen(string);//string lenght
 
+    if(lenght>32 || lenght<3)return 0;
+    for (int i = 0; i < lenght; i++){
+        if(!isalnum(string[i])){
+            if (accepts_underline){
+                if(string[i]!='_')return 0;
+            }else return 0;
+        }
+    }
+    return 1;
+}
+int is_int(short int is_unsigned,const char string[]){
+    int lenght = (int)strlen(string);
+    long int value = atol(string);
+
+    if(!is_unsigned){
+        if (value < INT_MIN || value > INT_MAX)return 0;
+    }else if (value < 0 || value > UINT_MAX)return 0;//UINT_MAX from limits.h contains the max number for a unsigned int
+    
+    for (int i = 0; i < lenght; i++){
+        if(string[i]<48 || string[i]>57){
+            if(i==0){//ex.: because in i=0 could be a '-' from a negative number
+                if (lenght <= 1)return 0;// so it doesn't accept only '-'
+                else if (!(string[i]=='-' || string[i]== '+'))return 0;
+            }else return 0;
+        }
+    }
+
+    return 1;
+}
 int main(int argc, char const *argv[]){
-    /*if ((mkfifo(CONSOLE_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
-        perror("Cannot create CONSOLE_PIPE: ");
-        exit(0);
-    }*/
-    if ((mkfifo(SENSOR_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
-        perror("Cannot create SENSOR_PIPE: ");
-        exit(0);
-    }
-    // Opens the CONSOLE_PIPE for reading
-    int console_fd,sensor_fd;
-    /*if ((console_fd = open(CONSOLE_PIPE, O_RDONLY)) < 0) {
-        perror("Cannot open CONSOLE_PIPE for reading: ");
-        exit(0);
-    }*/
-    // Opens the SENSOR_PIPE for reading
-    /*if ((sensor_fd = open(SENSOR_PIPE, O_RDONLY)) < 0) {
-        perror("Cannot open SENSOR_PIPE for reading: ");
-        exit(0);
-    }*/
-    int value;
-    printf("Hello There!\n");
-    while (1){
-        if(read(sensor_fd,&value,sizeof(int))==-1)printf("Erro\n");
-        printf("Recived from pipe: %d\n",value);
-    }
+    int i = is_int(1,"999999999999999999999999999");
+    printf("%d\n",i);
     return 0;
 }

@@ -1,4 +1,5 @@
-*.txt
+notas.txt
 *.pdf
 *.o
 *.vscode
+main.c
