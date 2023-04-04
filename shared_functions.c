@@ -1,12 +1,10 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <string.h>
-#include <limits.h>
+#include "shared_functions.h"
 
+/// @brief checker will check if the string is whitin size limit wich are predefined and if it is alphanumeric
+/// @param accepts_underline if > 0 accpets non-alphanumeric character '_' 
+/// @return 1 if the string checks, otherwise 0
 int checker(short int accepts_underline,const char string[]){
     int lenght = strlen(string);//string lenght
-
     if(lenght>32 || lenght<3)return 0;
     for (int i = 0; i < lenght; i++){
         if(!isalnum(string[i])){
@@ -16,6 +14,7 @@ int checker(short int accepts_underline,const char string[]){
         }
     }
     return 1;
+    
 }
 int is_int(short int is_unsigned,const char string[]){
     int lenght = (int)strlen(string);
@@ -35,8 +34,4 @@ int is_int(short int is_unsigned,const char string[]){
     }
 
     return 1;
-}
-int main(int argc, char const *argv[]){
-    for (unsigned int i = 0; i < 4294967296; i++);
-    return 0;
 }
