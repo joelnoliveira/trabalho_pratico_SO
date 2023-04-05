@@ -50,17 +50,20 @@ int main(int argc, char const *argv[]){
    sigaction(SIGTSTP,&new,NULL);
 
    if ((fd = open("SENSOR_PIPE", O_WRONLY)) < 0) {
-        perror("Cannot open pipe for writing");
+        perror("Cannot open SENSOR_PIPE for writing");
         exit(0);
    }
 
+   int write_return;
    char string[66];//tamanho max visto que tanto o id como a chave só podem ter no max 32 car cada um
    sprintf(string,"%s#%s#",argv[1],argv[3]);
    char temp[77];//tamanho da string + '\0' + 10 caracteres que são o max espaço possível ocupado por um unsigned int 
+
    while (1){
     value = (rand()%(max-min+1))+min;
     sprintf(temp,"%s%d\0",string,value);
-    write(fd,&temp,strlen(temp)+1);//+1 por causa de '/0'
+    write_return =  write(fd,&temp,strlen(temp)+1);//+1 por causa de '/0'
+    if(write_return==-1)printf("SENSOR_PIPE writing error\n");
     msg_count++;
     sleep(sleep_time);
    }

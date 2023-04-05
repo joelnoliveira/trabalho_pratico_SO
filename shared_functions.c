@@ -18,6 +18,8 @@ int checker(short int accepts_underline,const char string[]){
 }
 int is_int(short int is_unsigned,const char string[]){
     int lenght = (int)strlen(string);
+    if (lenght<1)return 0;
+    
     long int value = atol(string);
 
     if(!is_unsigned){
