@@ -12,7 +12,16 @@
 
 int console_fd,sensor_fd;
 pthread_t sensor_reader,console_reader,dispatcher;
-FILE log_file;
+FILE *log_file,*config_file;
+
+struct INTERNAL_QUEUE{
+    const char msg[123];
+    char *next;
+};
+struct INTERNAL_QUEUE_HEAD{
+    char *front;
+    char *prioritised;//the one who points t
+};
 
 void *console(void *param){
     // Opens the CONSOLE_PIPE for reading;
@@ -23,13 +32,15 @@ void *console(void *param){
         perror("Cannot open CONSOLE_PIPE for reading: ");
         exit(0);
     }
-    int read_return = 1;
-    char s[77];
+    int read_return;
+    char s[123];
     
-    while (read_return != 0){
+    while (1){
         read_return = read(console_fd,s,sizeof(s));
-        if(read_return==-1)printf("Erro\n");
-        printf("Recived from CONSOLE_PIPE: %s\n",s);
+        if(read_return > 0){
+            printf("Recived from CONSOLE_PIPE: %s\n",s);
+        }else if (read_return == 0)break;
+        else printf("Erro\n");
     }
     #ifdef DEBUG
     printf("Console going to exit\n");
@@ -47,13 +58,15 @@ void *sensor(void *param){
         perror("Cannot open SENSOR_PIPE for reading: ");
         exit(0);
     }
-    int read_return = 1;
+    int read_return;
     char s[77];
     
-    while (read_return != 0){
+    while (1){
         read_return = read(sensor_fd,s,sizeof(s));
-        if(read_return==-1)printf("Erro\n");
-        printf("Recived from SENSOR_PIPE: %s\n",s);
+        if(read_return > 0){
+            printf("Recived from SENSOR_PIPE: %s\n",s);
+        }else if (read_return == 0)break;
+        else printf("Erro\n");
     }
     #ifdef DEBUG
     printf("Console going to exit\n");
@@ -70,7 +83,6 @@ int main(int argc, char const *argv[]){
         printf("Sintaxe do comando a executar na linha de comando: $ home_iot {ficheiro de configuração}\n");
         exit(0);
     }
-    fopen("log.txt",'w');
     if ((mkfifo(CONSOLE_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
         perror("Cannot create CONSOLE_PIPE: ");
         exit(0);
@@ -79,6 +91,17 @@ int main(int argc, char const *argv[]){
         perror("Cannot create SENSOR_PIPE: ");
         exit(0);
     }
+    config_file = fopen(argv[1],"r");
+    if(config_file == NULL){
+        perror("config_file error: ");
+        exit(0);
+    }
+    log_file = fopen("log.txt","w");
+    if(log_file == NULL){
+        perror("log_file error: ");
+        exit(0);
+    }
+
 
     pthread_create(&console_reader,NULL,console,NULL);
     pthread_create(&sensor_reader,NULL,sensor,NULL);
@@ -88,5 +111,7 @@ int main(int argc, char const *argv[]){
     pthread_join(sensor_reader,NULL);
     pthread_join(dispatcher,NULL);
     
+    fclose(config_file);
+    fclose(log_file);
     return 0;
 }

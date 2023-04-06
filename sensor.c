@@ -55,14 +55,14 @@ int main(int argc, char const *argv[]){
    }
 
    int write_return;
-   char string[66];//tamanho max visto que tanto o id como a chave só podem ter no max 32 car cada um
+   char string[67];//tamanho max visto que tanto o id como a chave só podem ter no max 32 car cada um +'/0' + 2*'#'
    sprintf(string,"%s#%s#",argv[1],argv[3]);
-   char temp[77];//tamanho da string + '\0' + 10 caracteres que são o max espaço possível ocupado por um unsigned int 
+   char temp[77];//tamanho da string + 10 caracteres que são o max espaço possível ocupado por um int + '/0' + 2*'#'
 
    while (1){
     value = (rand()%(max-min+1))+min;
-    sprintf(temp,"%s%d\0",string,value);
-    write_return =  write(fd,&temp,strlen(temp)+1);//+1 por causa de '/0'
+    sprintf(temp,"%s%d",string,value);
+    write_return =  write(fd,&temp,strlen(temp)+1);//includes '\0'
     if(write_return==-1)printf("SENSOR_PIPE writing error\n");
     msg_count++;
     sleep(sleep_time);
