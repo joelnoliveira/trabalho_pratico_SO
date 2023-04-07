@@ -2,17 +2,15 @@
 //#include <stdlib.h> já esta incluido em shared_functions.c
 #include <unistd.h>
 #include <fcntl.h>
-#include <ctype.h>
 #include <signal.h>
 #include "shared_functions.h"
+#include <time.h>
 
 unsigned int msg_count = 0;
 int fd;
 
-void sigtstp_handler(int signo){
-    close(fd);
+void sigtstp_handler(){
     printf("Total mensagens enviadas: %d\n",msg_count);
-    exit(0);
 }
 int main(int argc, char const *argv[]){
     /*

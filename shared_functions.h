@@ -4,6 +4,7 @@
 #include <string.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 int checker(short int accepts_underline,const char string[]);
 
