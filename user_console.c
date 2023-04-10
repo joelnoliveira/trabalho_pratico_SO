@@ -2,9 +2,16 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define DEBUG
 
+int fd;
+
+void sigpipe_and_sigint_handler(){
+    close(fd);
+    exit(0);
+}
 int main(int argc, char const *argv[]){
     //argv[1] = id
 
@@ -16,11 +23,12 @@ int main(int argc, char const *argv[]){
         printf("O identificador da consola deve ser um código alfanumérico com um tamanho mínimo de 3 caracteres e tamanho máximo de 32 caracteres!\n");
         exit(0);
     }
-    int fd;
+    
     if ((fd = open("CONSOLE_PIPE", O_WRONLY)) < 0) {
         perror("Cannot open CONSOLE_PIPE for writing");
         exit(0);
     }
+
     int accepted,write_return;
     const char car[] = " ";
     char input[98];
@@ -28,6 +36,13 @@ int main(int argc, char const *argv[]){
     //[min](inteiro 2^31, comprimento max = 10 caracteres)#[max](inteiro) + '/0'
     const char menu[]="● exit - Sai do User Console\n● stats - Apresenta estatísticas referentes aos dados enviados pelos sensores\n● reset - Limpa todas as estatísticas calculadas até ao momento pelo sistema (relativa a todos os sensores, criados por qualquer User Console)\n● sensors - Lista todos os Sensors que enviaram dados ao sistema\n● add_alert [id] [chave] [min] [max] - Adiciona uma nova regra de alerta ao sistema\n● remove_alert [id] - Remove uma regra de alerta do sistema\n● list_alerts - Lista todas as regras de alerta que existem no sistema\n";
     
+    struct sigaction new;
+    new.sa_handler = sigpipe_and_sigint_handler;
+    new.sa_flags = 0;
+    sigfillset(&new.sa_mask);
+    sigaction(SIGPIPE,&new,NULL);
+    sigaction(SIGINT,&new,NULL);
+
     #ifdef DEBUG
     printf("Everything seems alright, let's start reading some commands!\n");
     #endif
@@ -100,16 +115,13 @@ int main(int argc, char const *argv[]){
             sprintf(output,"%s#6",argv[1]);
             accepted = 1;
         }else if (strncmp("exit",input,4)==0){
-            break;
-        }else printf("%s",menu);
+            sigpipe_and_sigint_handler();
+        }else printf("Bad Commmand\n%s",menu);
         if (accepted){
             accepted = 0;
             write_return = write(fd,output,strlen(output)+1);//includes '\0'
             if (write_return==-1)printf("user_console %s: error writing on CONSOLE_PIPE\n",argv[1]); 
         }
-        
-        
-        
     }
     
     return 0;

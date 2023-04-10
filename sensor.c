@@ -9,6 +9,10 @@
 unsigned int msg_count = 0;
 int fd;
 
+void sigpipe_and_sigint_handler(){
+    close(fd);
+    exit(0);
+}
 void sigtstp_handler(){
     printf("Total mensagens enviadas: %d\n",msg_count);
 }
@@ -36,15 +40,19 @@ int main(int argc, char const *argv[]){
    
 
    int value,min,max,sleep_time;
-   struct sigaction new;
+   struct sigaction new,new2;
    min = atoi(argv[4]);
    max = atoi(argv[5]);
    sleep_time = atoi(argv[2]);
    srand(time(NULL));
 
    new.sa_handler = sigtstp_handler;
-   new.sa_flags = 0;
+   new2.sa_handler = sigpipe_and_sigint_handler;
+   new.sa_flags = new2.sa_flags = 0;
    sigaddset(&new.sa_mask,SIGTSTP);
+   sigfillset(&new2.sa_mask);
+   sigaction(SIGPIPE,&new2,NULL);
+   sigaction(SIGINT,&new2,NULL);
    sigaction(SIGTSTP,&new,NULL);
 
    if ((fd = open("SENSOR_PIPE", O_WRONLY)) < 0) {
