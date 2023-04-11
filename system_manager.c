@@ -1,3 +1,8 @@
+/*Trabalho Elaborado por:
+Joel Oliveira 2021215037
+João Querido  2021240660
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -73,12 +78,6 @@ FILE *log_file,*config_file;
 INTERNAL_QUEUE_HEAD *head;
 fd_set *write_set;
 
-void print(char s[]){
-    sem_wait(print_mutex);
-    printf("%s\n",s);
-    printf("Printador por print\n");
-    sem_post(print_mutex);
-}
 void add_to_queue(short int priority,char content[]){
     INTERNAL_QUEUE *ptr,*aux_ptr,*pre_aux_ptr;
 
@@ -256,7 +255,6 @@ void work(int worker_n){
             /*sem_wait(print_mutex);
             printf("Worker a registar dados de sensor\n");
             sem_post(print_mutex);*/
-            print("Worker a registar dados de sensor");
             sem_wait(shm_mutex);
             work_sensor(s);
             sem_post(shm_mutex);
@@ -269,6 +267,11 @@ void work(int worker_n){
             sem_post(shm_mutex);
         }
     }
+}
+void alerts_watcher(){
+    sem_wait(print_mutex);
+    printf("Alert Watcher created!\n");
+    sem_post(print_mutex);
 }
 void *console(){
     // Opens the CONSOLE_PIPE for reading;
@@ -359,7 +362,7 @@ void *sensor(){
     return NULL;
 }
 void sigint_handler(){
-    INTERNAL_QUEUE *ptr;
+    //INTERNAL_QUEUE *ptr;
     time_t t;
     time(&t);
     //sem_wait(print_mutex);
@@ -368,7 +371,6 @@ void sigint_handler(){
     fprintf(log_file,"%s SIGINT recived\n",ctime(&t));
     fclose(config_file);
     pthread_mutex_lock(&queue_mutex);
-
     while (head->start!=NULL){
         ptr = head->start;
         head->start = ptr->next;
@@ -412,6 +414,10 @@ void *dispatch(){
         }
         close(channels[i][0]);
     }
+    if(fork()==0){
+            alerts_watcher();
+            exit(0);
+        }
     struct sigaction new;
     new.sa_handler = sigint_handler;
     new.sa_flags = 0;
@@ -440,7 +446,7 @@ void *dispatch(){
             printf("Removed from queue: %s\n",s);
             sem_post(print_mutex);
             #endif
-            //sleep(3);//to simulate worker working
+            sleep(3);//to simulate worker working
                 if(select(channels[config[1]-1]+1,NULL,write_set,NULL,NULL)>0){
                     for (int i = 0; i < config[1]; i++){
                         sem_wait(shm_mutex);

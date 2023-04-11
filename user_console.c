@@ -1,3 +1,7 @@
+/*Trabalho Elaborado por:
+Joel Oliveira 2021215037
+João Querido  2021240660
+*/
 #include "shared_functions.h"
 #include <stdio.h>
 #include <fcntl.h>

@@ -1,3 +1,8 @@
+/*Trabalho Elaborado por:
+Joel Oliveira 2021215037
+João Querido  2021240660
+*/
+
 #include <stdio.h>
 //#include <stdlib.h> já esta incluido em shared_functions.c
 #include <unistd.h>
