@@ -18,7 +18,7 @@ João Querido  2021240660
 #include <semaphore.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
-#include <sys/select.h>
+#include <stdbool.h>
 
 #define SENSOR_PIPE "SENSOR_PIPE"
 #define CONSOLE_PIPE "CONSOLE_PIPE"
@@ -38,35 +38,32 @@ typedef struct INTERNAL_QUEUE_HEAD{
 }INTERNAL_QUEUE_HEAD;
 typedef struct sensors_list{
     char id[33];
-    int my_shmid;
-    struct sensors_list *next;
 }sensors_list;
 typedef struct sensor_struct{
     //char **key;
     char key[33];
-    int last_value,min,max,updates,my_shmid;
+    int last_value,min,max,updates;
     double average;
-    struct sensor_struct *next;
 }sensor_struct;
 typedef struct alert_struct{
     char user_console_id[32];
     char key[32];
-    int min,max,my_shmid;
-    struct alert_struct *next;
+    int min,max;
 }alert_struct;
 typedef struct{
-    sensor_struct *first_sensor_stats;
-    alert_struct *first_alert;
-    sensors_list *first_sensor;
-    fd_set write_set;
+    int sensor_stats_count,sensor_count,alerts_count;
+    bool *workers_array;//if 0 is free otherwise is working
+    sensor_struct *sensor_stats_array;
+    sensors_list *sensors_array;
+    alert_struct *alerts_array;
 } mem_struct;
 
-int console_fd,sensor_fd,cur_queue_sz,cur_n_workers,cur_keys_n,cur_sensors_n,cur_alerts_n,shmid,channels[5][2];
+//bool *workers_array;
+int console_fd,sensor_fd,cur_queue_sz,shmid,channels[5][2];
 /// @brief QUEUE_SZ, N_WORKERS, MAX_KEYS, MAX_SENSORS, MAX_ALERTS
 int config[5];
-pid_t *workers;
 mem_struct* mem;
-sem_t *available_workers,*shm_mutex,*print_mutex;
+sem_t *available_workers_sem,*shm_mutex,*print_mutex;
 pthread_t sensor_reader,console_reader,dispatcher;
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -76,8 +73,21 @@ FILE *log_file,*config_file;
 
 
 INTERNAL_QUEUE_HEAD *head;
-fd_set *write_set;
-
+/// @brief 
+/// @param function 0 prints in log_file and in stdout, 1 prints only in log_file, 2 prints only in stdout
+/// @param s 
+void print(short int function,char s[]){
+    sem_wait(print_mutex);
+    if(function == 0 || function == 1){
+        time_t t;
+        time(&t);
+        fprintf(log_file,"%s %s\n",ctime(&t),s);
+    }
+    if(function == 0 || function == 2){
+        printf("%s",s);
+    }
+    sem_post(print_mutex);
+}
 void add_to_queue(short int priority,char content[]){
     INTERNAL_QUEUE *ptr,*aux_ptr,*pre_aux_ptr;
 
@@ -150,63 +160,56 @@ short int pop_queue(char dest_string[]){
 void work_sensor(char s[]){
     char *id,*key,*value;//tokens
     char car[] = "#";
-    int aux_shmid;
-    sensor_struct *aux_mem,*prev_aux_mem;
-    sensors_list *aux_sensor,*prev_aux_sensor;
+    int i,val;
+    bool found = false;
     id = strtok(s,car);
-    aux_sensor = mem->first_sensor;
-    prev_aux_sensor = aux_sensor;
-    while (aux_sensor != NULL){
-        prev_aux_sensor = aux_sensor;
-        if(strcmp(id,aux_sensor->id)==0){//if id was found
+    
+    for(i=0;i<config[3];i++){
+        if(i>= mem->sensor_count)break;
+        print(2,"H\n");
+        if(strcmp(id,(mem->sensors_array+i)->id)==0){//if id was found
+            found = true;
             break;
         }
-        aux_sensor = aux_sensor->next;
     }
-    if(aux_sensor == NULL){//if it was not found
-        aux_shmid = shmget(IPC_PRIVATE, sizeof(sensors_list), IPC_CREAT|0700);
-        if (aux_shmid < 1) exit(0);
-        aux_sensor = (sensors_list*) shmat(aux_shmid, NULL, 0);
-        if (aux_sensor < (sensors_list*) 1) exit(0);
-        aux_sensor->my_shmid = aux_shmid;
-        strcpy(aux_sensor->id,id);
-        aux_sensor->next = NULL;
-
-        if(mem->first_sensor != NULL){
-            prev_aux_sensor->next = aux_sensor;
-        }else mem->first_sensor = aux_sensor;
+    
+    if(!found){//if it was not found
+        if(mem->sensor_count<config[3]){//if sensor list is not full
+            strcpy((mem->sensors_array+i)->id,id);
+            mem->sensor_count++;
+        }else print(2,"Sensors list is Full\n");
     }
     key = strtok(0,car);
     value = strtok(0,car);
-    aux_mem = mem->first_sensor_stats;
-    prev_aux_mem = aux_mem;
-    while (aux_mem != NULL){
-        prev_aux_mem = aux_mem;
-        if(strcmp(key,aux_mem->key)==0)break;
-        aux_mem = aux_mem->next;
+    
+    found = false;
+    for (i = 0; i < config[2]; i++){
+        if(i >= mem->sensor_stats_count)break;
+        print(2,"E\n");
+        if(strcmp(key,(mem->sensor_stats_array+i)->key)==0){
+            found = true;
+            break;
+        }
     }
-    if(aux_mem!=NULL){
-        aux_shmid = atoi(value);
-        aux_mem->average = (aux_mem->updates * aux_mem->average + aux_shmid)/(aux_mem->updates + 1);
-        aux_mem->last_value = aux_shmid;
-        aux_mem->updates++;
-        if(aux_shmid>aux_mem->max)aux_mem->max = aux_shmid;
-        else if(aux_shmid < aux_mem->min)aux_mem->min = aux_shmid;
-    }else{
-        aux_shmid = shmget(IPC_PRIVATE, sizeof(sensor_struct), IPC_CREAT|0700);
-        if (aux_shmid < 1) exit(0);
-        aux_mem = (sensor_struct*) shmat(aux_shmid, NULL, 0);
-        aux_mem->my_shmid = aux_shmid;
-        if (aux_mem < (sensor_struct*) 1) exit(0);
-        strcpy(aux_mem->key,key);
-        aux_mem->average = aux_mem->last_value = aux_mem->max = aux_mem->min = atoi(value);
-        aux_mem->updates = 1;
-        aux_mem->my_shmid = aux_shmid;
-        aux_mem->next = NULL;
-
-        if(mem->first_sensor_stats != NULL){
-            prev_aux_mem->next = aux_mem;
-        }else mem->first_sensor_stats = aux_mem;
+    
+    val = atoi(value);
+    sensor_struct *ss = mem->sensor_stats_array+i;
+    
+    if(found){//if the key was found
+        ss->average = (ss->updates * ss->average + val)/(ss->updates + 1);
+        ss->last_value = val;
+        ss->updates++;
+        if(val > ss->max)ss->max = val;
+        else if(val < ss->min)ss->min = val;
+    }else{//if not found
+        if(mem->sensor_stats_count < config[2]){
+            strcpy(ss->key,key);
+            ss->average = ss->last_value = ss->max = ss->min = val;
+            ss->updates = 1;
+            mem->sensor_stats_count++;
+        }else{
+            print(2,"Stats array is full!\n");
+        }
     }
 }
 void work_user(char s[]){
@@ -215,57 +218,81 @@ void work_user(char s[]){
     s1 = strtok(s,car);
     s1 = strtok(0,car);
     if(strcmp(s1,"1")==0){
-        sensor_struct *aux_mem;
-        aux_mem = mem->first_sensor_stats;
+        sensor_struct *ss;
         sem_wait(print_mutex);
         printf("Key Last Min Max Avg Count\n");
-        while (aux_mem!=NULL){
-            printf("%s %d %d %d %f %d\n",aux_mem->key,aux_mem->last_value,aux_mem->min,aux_mem->max,aux_mem->average,aux_mem->updates);
-            aux_mem = aux_mem->next;
+        for(int i=0;i<config[2];i++){
+            ss = mem->sensor_stats_array+i;
+            if(i>= mem->sensor_stats_count)break;
+            printf("%s %d %d %d %f %d\n",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
+        }
+        sem_post(print_mutex);
+    }else if(strcmp(s1,"3")==0){
+        sensors_list *sl;
+        sem_wait(print_mutex);
+        printf("ID\n");
+        for (int i = 0; i < config[3]; i++){
+            sl = mem->sensors_array+i;
+            if(i>=mem->sensor_count)break;
+            printf("%s\n",sl->id);
         }
         sem_post(print_mutex);
     }
 }
-
 void work(int worker_n){
     sem_wait(print_mutex);
     printf("worker %d starting\n",worker_n);
     sem_post(print_mutex);
     close(channels[worker_n][1]);
-    char s[123];
     char c;
     int i;
+    ssize_t size;
+    char s[123];
     while (1){
-        sem_wait(shm_mutex);
-        FD_SET(channels[worker_n][1],write_set);
-        read(channels[worker_n][0],s,sizeof(s));
+        size = read(channels[worker_n][0],s,sizeof(s));
+        if(size == -1){
+            time_t t = time(NULL);
+            sem_wait(print_mutex);
+            printf("Error reading from worker %d unamed_pipe: %s\n",worker_n,strerror(errno));
+            fprintf(log_file,"%s Error reading from SENSOR_PIPE: %s\n",ctime(&t),strerror(errno));
+            sem_post(print_mutex);
+        }
+        s[size]=0;//indicates end of line
         sem_post(shm_mutex);
+
+        #ifdef DEBUG
         sem_wait(print_mutex);
         printf("WORKer %d : I've read: %s\n",worker_n,s);
         sem_post(print_mutex);
-        //sleep(worker_n+3);
+        #endif
+
+        //sleep((rand()%(3-1+1))+1);
         i = 0;
         do{
             c = s[i];
             i++;
         } while (c!='#');
-        i++;
+        i+=2;
         c = s[i];
-        if(c!='#'){//Dados de um sensor
-            /*sem_wait(print_mutex);
+        if(c!=0){//Dados de um sensor
+            sem_wait(print_mutex);
             printf("Worker a registar dados de sensor\n");
-            sem_post(print_mutex);*/
+            sem_post(print_mutex);
             sem_wait(shm_mutex);
             work_sensor(s);
             sem_post(shm_mutex);
         }else{//Dados de um user
             sem_wait(print_mutex);
-            printf("Worker a registar dados de sensor\n");
+            printf("User stuff\n");
             sem_post(print_mutex);
             sem_wait(shm_mutex);
             work_user(s);
             sem_post(shm_mutex);
         }
+        sem_wait(shm_mutex);
+        mem->workers_array[worker_n] = false;
+        sem_post(shm_mutex);
+        sem_post(available_workers_sem);
     }
 }
 void alerts_watcher(){
@@ -312,7 +339,7 @@ void *console(){
             perror("Error reading from CONSOLE_PIPE\n");
             fprintf(log_file,"%s Error reading from CONSOLE_PIPE: %s\n",ctime(&t),strerror(errno));
             sem_post(print_mutex);
-        }
+        }else printf("Console PIpe is empty\n");
     }
     return NULL;
     
@@ -357,7 +384,7 @@ void *sensor(){
             perror("Error reading from SENSOR_PIPE\n");
             fprintf(log_file,"%s Error reading from SENSOR_PIPE: %s\n",ctime(&t),strerror(errno));
             sem_post(print_mutex);
-        }
+        }else printf("Sensor PIpe is empty\n");
     }
     return NULL;
 }
@@ -390,7 +417,7 @@ void sigint_handler(){
 
     sem_close(print_mutex);
     sem_close(shm_mutex);
-    sem_close(available_workers);
+    sem_close(available_workers_sem);
     sem_unlink("PRINT_MUTEX");
     sem_unlink("SHM_MUTEX");
     sem_unlink("AVAILABLE_WORKERS");
@@ -406,18 +433,6 @@ void *dispatch(){
     fprintf(log_file,"%s Dispatch thread starting!\n",ctime(&t));
     sem_post(print_mutex);
     
-    for (int i = 0; i < config[1]; i++){
-        pipe(channels[i]);
-        if(fork()==0){
-            work(i);
-            exit(0);
-        }
-        close(channels[i][0]);
-    }
-    if(fork()==0){
-            alerts_watcher();
-            exit(0);
-        }
     struct sigaction new;
     new.sa_handler = sigint_handler;
     new.sa_flags = 0;
@@ -426,15 +441,14 @@ void *dispatch(){
     char s[123];
     int x,y;
 
-    FD_ZERO(write_set);
-    for (int i = 0; i < config[1]; i++){
-            sem_wait(shm_mutex);
-            FD_SET(channels[i][1],write_set);
-            sem_post(shm_mutex);
-        }
     while (1){
         pthread_mutex_lock(&queue_mutex);
         while (cur_queue_sz < 1){
+            #ifdef DEBUG
+            sem_wait(print_mutex);
+            printf("QUEUE is empty! Nothing to pop!\n");
+            sem_post(print_mutex);
+            #endif
             pthread_cond_wait(&queue_empty_cond,&queue_mutex);
         }
         x = pop_queue(s);
@@ -446,36 +460,22 @@ void *dispatch(){
             printf("Removed from queue: %s\n",s);
             sem_post(print_mutex);
             #endif
-            sleep(3);//to simulate worker working
-                if(select(channels[config[1]-1]+1,NULL,write_set,NULL,NULL)>0){
-                    for (int i = 0; i < config[1]; i++){
-                        sem_wait(shm_mutex);
-                        y = FD_ISSET(channels[i][1],write_set);
-                        sem_post(shm_mutex);
-                        if(y!=0){
-                            //sem_wait(available_workers);
-                            write(channels[i][1],s,strlen(s)+1);
-                            sem_wait(shm_mutex);
-                            FD_CLR(channels[i][1],write_set);
-                            sem_post(shm_mutex);
-                            break;
-                        }
-                        //sem_post(available_workers);
-                        #ifdef DEBUG
-                        sem_wait(print_mutex);
-                        printf("Worker %d is occupied!\n",i);
-                        sem_post(print_mutex);
-                        #endif
-                        
-                    }
+            sem_wait(available_workers_sem);
+            for (int i = 0; i < config[1]; i++){
+                sem_wait(shm_mutex);//because of workers_array
+                if(!mem->workers_array[i]){//if worker not occupied
+                    mem->workers_array[i]=true;
+                    sem_post(shm_mutex);
+                    write(channels[i][1],s,strlen(s)+1);
+                    break;
                 }
-            
-        }else{
-            #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("QUEUE is empty! Nothing to pop!\n");
-            sem_post(print_mutex);
-            #endif
+                sem_post(shm_mutex);
+                #ifdef DEBUG
+                sem_wait(print_mutex);
+                printf("Worker %d is occupied!\n",i);
+                sem_post(print_mutex);
+                #endif
+            }
         }
     }
     //waitpid(-1,NULL,0);
@@ -548,18 +548,13 @@ int main(int argc, char const *argv[]){
         exit(0);
     }
     
-    cur_queue_sz = cur_alerts_n = cur_keys_n = cur_n_workers = cur_sensors_n = 0;
+    cur_queue_sz = 0;
 
     head = (INTERNAL_QUEUE_HEAD*)malloc(sizeof(INTERNAL_QUEUE_HEAD));
     head->start = NULL;
     head->end = NULL;
 
-    /*shmid = shmget(IPC_PRIVATE, sizeof(fd_set), IPC_CREAT|0700);
-    if (shmid < 1) exit(0);
-    write_set = (fd_set*)shmat(shmid,NULL,0); 
-    if (write_set < (fd_set*) 1) exit(0);*/
-
-    shmid = shmget(IPC_PRIVATE, sizeof(mem_struct), IPC_CREAT|0700);
+    shmid = shmget(IPC_PRIVATE, sizeof(mem_struct)+config[1]*sizeof(bool)+config[2]*sizeof(sensor_struct)+config[3]*sizeof(sensors_list)+config[4]*sizeof(alert_struct), IPC_CREAT|0700);
     if (shmid < 1) exit(0);
 
     #ifdef DEBUG
@@ -568,25 +563,59 @@ int main(int argc, char const *argv[]){
 
     mem = (mem_struct*) shmat(shmid, NULL, 0);
     if (mem < (mem_struct*) 1) exit(0);
-
+    
     #ifdef DEBUG
     printf("Shared memory attached!\n");
     #endif
 
-    /*sem_init(&mem->print_mutex,1,1);
-    print_mutex = &mem->print_mutex;*/
+    mem->workers_array = (bool*) (mem+1);
+    mem->sensor_stats_array = (sensor_struct*)(mem->workers_array + config[1]);
+    mem->sensors_array = (sensors_list*)(mem->sensor_stats_array + config[2]);
+    mem->alerts_array = (alert_struct*)(mem->sensors_array + config[3]);
+
+    mem->sensor_stats_count = mem->sensor_count = mem->alerts_count = 0;
+
+    //strcpy(mem->sensors_array[0].id,"Hello");
+    //strcpy(mem->sensors_array[1].id,"There");
+
+    //printf("%d\n", mem->workers_array+1);
+    //printf("%d\n",mem->sensor_stats_array+1);
+    //printf("%s\n",mem->sensors_array[0].id);
+    //printf("%s\n",mem->sensors_array[1].id);
+    //printf("%d\n",mem->alerts_array+1);
 
     sem_unlink("AVAILABLE_WORKERS");
-	available_workers = sem_open("AVAILABLE_WORKERS",O_CREAT|O_EXCL,0700,config[1]);
+	available_workers_sem = sem_open("AVAILABLE_WORKERS",O_CREAT|O_EXCL,0700,config[1]);
 	sem_unlink("SHM_MUTEX");
 	shm_mutex =sem_open("SHM_MUTEX",O_CREAT|O_EXCL,0700,1);
 	sem_unlink("PRINT_MUTEX");
 	print_mutex =sem_open("PRINT_MUTEX",O_CREAT|O_EXCL,0700,1);
 
-    mem->first_alert = NULL;
-    mem->first_sensor_stats = NULL;
-    mem->first_sensor_stats = NULL;
-    write_set = &mem->write_set;
+    __pid_t pid;
+    
+    for (int i = 0; i < config[1]; i++){
+        pipe(channels[i]);
+        pid = fork();
+        if(pid == 0){
+            print_mutex = sem_open("PRINT_MUTEX",0);
+            shm_mutex = sem_open("SHM_MUTEX",0);
+            available_workers_sem = sem_open("AVAILABLE_WORKERS",0);
+            work(i);
+            exit(0);
+        }else if(pid ==-1){
+            print(0,"Erro worker creation");
+            exit(0);
+        }
+        close(channels[i][0]);
+    }
+    pid = fork();
+    if(pid==0){
+        alerts_watcher();
+        exit(0);
+    }else if(pid ==-1){
+        print(0,"Erro worker creation");
+        exit(0);
+    }
 
     pthread_create(&console_reader,NULL,console,NULL);
     pthread_create(&sensor_reader,NULL,sensor,NULL);
