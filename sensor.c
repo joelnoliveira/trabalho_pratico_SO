@@ -14,7 +14,8 @@ João Querido  2021240660
 unsigned int msg_count = 0;
 int fd;
 
-void sigpipe_and_sigint_handler(){
+void sigpipe_and_sigint_handler(int signo){
+    if(signo == SIGPIPE)printf("Error: Broken Pipe\n");
     close(fd);
     exit(0);
 }

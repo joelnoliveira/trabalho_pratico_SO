@@ -7,13 +7,46 @@ João Querido  2021240660
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <pthread.h>
+#include <stdbool.h>
 
 #define DEBUG
 
-int fd;
+int fd,msqid;
+pthread_t receiver;
 
-void sigpipe_and_sigint_handler(){
+typedef struct {
+long mtype;
+char content[88];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces + '\n'
+}MSG;
+
+void *receive(void *arg){
+    MSG msg;
+    long value = atol(arg);
+    while (1){
+        if(msgrcv(msqid, &msg, sizeof(msg)-sizeof(long),value, 0)==-1){
+            perror("Error reciving message");
+        }
+        printf("%s\n",msg.content);
+    }
+    return NULL;
+}
+void create_thread(const char arg[]){
+    long value = atol(arg);
+    int erro;
+    erro = pthread_create(&receiver,NULL,receive,&value);
+    if(erro != 0){
+        printf("%s\n",strerror(erro));
+    }
+}
+void sigpipe_and_sigint_handler(int signo){
+    if(signo==SIGPIPE)printf("Error: Broken Pipe\n");
     close(fd);
+    close(msqid);
+    kill(0,SIGTERM);
     exit(0);
 }
 int main(int argc, char const *argv[]){
@@ -23,8 +56,8 @@ int main(int argc, char const *argv[]){
         printf("Sintaxe do comando a executar na linha de comando:\n$ user_console {identificador da consola}\n");
         exit(0);
     }
-    if(!checker(0,argv[1])){
-        printf("O identificador da consola deve ser um código alfanumérico com um tamanho mínimo de 3 caracteres e tamanho máximo de 32 caracteres!\n");
+    if(!checker(-1,argv[1])){
+        printf("O parâmetro identificador da consola tem de ser um valor inteiro superior a 0\n");
         exit(0);
     }
     
@@ -32,20 +65,32 @@ int main(int argc, char const *argv[]){
         perror("Cannot open CONSOLE_PIPE for writing");
         exit(0);
     }
-
-    int accepted,write_return;
-    const char car[] = " ";
-    char input[98];
-    char output[123];//tamanho máx possível:id da consola(max 32 carac)#function()[0-6]#[id](max 32 caracteres)#[chave](max 32 caracteres)#
-    //[min](inteiro 2^31, comprimento max = 10 caracteres)#[max](inteiro) + '/0'
-    const char menu[]="● exit - Sai do User Console\n● stats - Apresenta estatísticas referentes aos dados enviados pelos sensores\n● reset - Limpa todas as estatísticas calculadas até ao momento pelo sistema (relativa a todos os sensores, criados por qualquer User Console)\n● sensors - Lista todos os Sensors que enviaram dados ao sistema\n● add_alert [id] [chave] [min] [max] - Adiciona uma nova regra de alerta ao sistema\n● remove_alert [id] - Remove uma regra de alerta do sistema\n● list_alerts - Lista todas as regras de alerta que existem no sistema\n";
+    key_t key = ftok("user_console.c",'B');
+    if (key==-1){
+        perror("Error on ftok key generation");
+        exit(0);
+    }
     
+    msqid = msgget(key,IPC_CREAT|0700);
+    if(msqid == -1){
+        perror("Cannot get message queue");
+        close(fd);
+        exit(0);
+    }
     struct sigaction new;
     new.sa_handler = sigpipe_and_sigint_handler;
     new.sa_flags = 0;
     sigfillset(&new.sa_mask);
     sigaction(SIGPIPE,&new,NULL);
     sigaction(SIGINT,&new,NULL);
+    create_thread(argv[1]);
+    bool accepted;
+    int write_return;
+    const char car[] = " ";
+    char input[98];
+    char output[123];//tamanho máx possível:id da consola(max 32 carac)#function()[0-6]#[id](max 32 caracteres)#[chave](max 32 caracteres)#
+    //[min](inteiro 2^31, comprimento max = 10 caracteres)#[max](inteiro) + '/0'
+    const char menu[]="-> exit - Sai do User Console\n-> stats - Apresenta estatísticas referentes aos dados enviados pelos sensores\n-> reset - Limpa todas as estatísticas calculadas até ao momento pelo sistema (relativa a todos os sensores, criados por qualquer User Console)\n-> sensors - Lista todos os Sensors que enviaram dados ao sistema\n-> add_alert [id] [chave] [min] [max] - Adiciona uma nova regra de alerta ao sistema\n-> remove_alert [id] - Remove uma regra de alerta do sistema\n-> list_alerts - Lista todas as regras de alerta que existem no sistema\n";
 
     #ifdef DEBUG
     printf("Everything seems alright, let's start reading some commands!\n");
@@ -63,7 +108,6 @@ int main(int argc, char const *argv[]){
             sprintf(output,"%s#3",argv[1]);
             accepted = 1;
         }else if (strncmp("add_alert",input,9)==0){
-            printf("É um para adicionar um alerta\n");
             char *s1,*s2,*s3,*s4;
             char sintaxe[] = "Verifique a sintaxe: add_alert [id] [chave] [min] [max]\n";
             strtok(input, car);//ignores "add_alert"
@@ -119,8 +163,8 @@ int main(int argc, char const *argv[]){
             sprintf(output,"%s#6",argv[1]);
             accepted = 1;
         }else if (strncmp("exit",input,4)==0){
-            sigpipe_and_sigint_handler();
-        }else printf("Bad Commmand\n%s",menu);
+            sigpipe_and_sigint_handler(SIGTERM);
+        }else printf("Bad Command\n%s",menu);
         if (accepted){
             accepted = 0;
             write_return = write(fd,output,strlen(output)+1);//includes '\0'

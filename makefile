@@ -4,7 +4,7 @@ home_iot:	system_manager.o
 sensor:	sensor.o shared_functions.o
 	gcc -Wall -Wextra sensor.o shared_functions.o -o sensor
 user_console: user_console.o shared_functions.o
-	gcc -Wall -Wextra user_console.o shared_functions.o -o user_console
+	gcc -Wall -Wextra -pthread user_console.o shared_functions.o -o user_console
 system_manager.o:	system_manager.c
 	gcc -Wall -Wextra system_manager.c -c
 sensor.o:	sensor.c shared_functions.h

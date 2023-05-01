@@ -19,6 +19,7 @@ João Querido  2021240660
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <stdbool.h>
+#include <sys/msg.h>
 
 #define SENSOR_PIPE "SENSOR_PIPE"
 #define CONSOLE_PIPE "CONSOLE_PIPE"
@@ -46,9 +47,8 @@ typedef struct sensor_struct{
     double average;
 }sensor_struct;
 typedef struct alert_struct{
-    char user_console_id[32];
+    int min,max,user_console_id;
     char key[32];
-    int min,max;
 }alert_struct;
 typedef struct{
     int sensor_stats_count,sensor_count,alerts_count;
@@ -58,8 +58,12 @@ typedef struct{
     alert_struct *alerts_array;
 } mem_struct;
 
-//bool *workers_array;
-int console_fd,sensor_fd,cur_queue_sz,shmid,channels[5][2];
+typedef struct {
+long mtype;
+char content[88];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces + '\n'
+}MSG;
+
+int console_fd,sensor_fd,cur_queue_sz,shmid,msqid;
 /// @brief QUEUE_SZ, N_WORKERS, MAX_KEYS, MAX_SENSORS, MAX_ALERTS
 int config[5];
 mem_struct* mem;
@@ -78,315 +82,16 @@ INTERNAL_QUEUE_HEAD *head;
 /// @param s 
 void print(short int function,char s[]){
     sem_wait(print_mutex);
+    if(function == 0 || function == 2){
+        printf("%s\n",s);
+    }
     if(function == 0 || function == 1){
         time_t t;
         time(&t);
         fprintf(log_file,"%s %s\n",ctime(&t),s);
-    }
-    if(function == 0 || function == 2){
-        printf("%s",s);
+        fflush(log_file);
     }
     sem_post(print_mutex);
-}
-void add_to_queue(short int priority,char content[]){
-    INTERNAL_QUEUE *ptr,*aux_ptr,*pre_aux_ptr;
-
-    pthread_mutex_lock(&queue_mutex);
-    if(cur_queue_sz < config[0] || priority > 0){// if the queue is not full or if it has priority
-        while(cur_queue_sz >= config[0]){//if the queue is full but the content has priority it waits unitl the queue has some space left
-            #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("Priority content waiting for queue to free 1 space\n");
-            sem_post(print_mutex);
-            #endif
-            pthread_cond_wait(&queue_full_cond,&queue_mutex);
-            #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("Priority content waited and now will procced\n");
-            sem_post(print_mutex);
-            #endif
-        }
-        ptr = (INTERNAL_QUEUE*)malloc(sizeof(INTERNAL_QUEUE));
-        strcpy(ptr->msg,content);
-        ptr->priority = priority;
-        ptr->next = NULL;
-
-        if (head->start == NULL){//if the queue is empty
-            head->start = ptr;
-            head->end = ptr;
-        }else if(!priority){//if it isn't empty and doesn't have priority it goes to the end
-            head->end->next = ptr;
-            head->end = ptr;
-        }else{
-            aux_ptr = head->start;
-            pre_aux_ptr = head->start;
-            while(aux_ptr->priority > 0){
-                pre_aux_ptr = aux_ptr;
-                aux_ptr = aux_ptr->next;
-            }
-            if(aux_ptr != pre_aux_ptr){
-                pre_aux_ptr->next = ptr;
-                ptr->next = aux_ptr;
-            }else{
-                head->start = ptr;
-                ptr->next = aux_ptr;
-            }
-        }
-        cur_queue_sz++;
-
-    }else{
-        #ifdef DEBUG
-        sem_wait(print_mutex);
-        printf("QUEUE is FULL\n");
-        sem_post(print_mutex);
-        #endif
-        }
-    pthread_cond_signal(&queue_empty_cond);
-    pthread_mutex_unlock(&queue_mutex);
-}
-
-/// @brief pops the first element of the queue
-short int pop_queue(char dest_string[]){
-    INTERNAL_QUEUE *ptr;
-    ptr = head->start;
-    if (ptr == NULL)return 0;//nothing to pop
-    head->start = ptr->next;
-    strcpy(dest_string,ptr->msg);
-    if(head->start == NULL)head->end = NULL;//if the queue is now empty
-    cur_queue_sz--;
-    free(ptr);
-    return 1;
-} 
-void work_sensor(char s[]){
-    char *id,*key,*value;//tokens
-    char car[] = "#";
-    int i,val;
-    bool found = false;
-    id = strtok(s,car);
-    
-    for(i=0;i<config[3];i++){
-        if(i>= mem->sensor_count)break;
-        print(2,"H\n");
-        if(strcmp(id,(mem->sensors_array+i)->id)==0){//if id was found
-            found = true;
-            break;
-        }
-    }
-    
-    if(!found){//if it was not found
-        if(mem->sensor_count<config[3]){//if sensor list is not full
-            strcpy((mem->sensors_array+i)->id,id);
-            mem->sensor_count++;
-        }else print(2,"Sensors list is Full\n");
-    }
-    key = strtok(0,car);
-    value = strtok(0,car);
-    
-    found = false;
-    for (i = 0; i < config[2]; i++){
-        if(i >= mem->sensor_stats_count)break;
-        print(2,"E\n");
-        if(strcmp(key,(mem->sensor_stats_array+i)->key)==0){
-            found = true;
-            break;
-        }
-    }
-    
-    val = atoi(value);
-    sensor_struct *ss = mem->sensor_stats_array+i;
-    
-    if(found){//if the key was found
-        ss->average = (ss->updates * ss->average + val)/(ss->updates + 1);
-        ss->last_value = val;
-        ss->updates++;
-        if(val > ss->max)ss->max = val;
-        else if(val < ss->min)ss->min = val;
-    }else{//if not found
-        if(mem->sensor_stats_count < config[2]){
-            strcpy(ss->key,key);
-            ss->average = ss->last_value = ss->max = ss->min = val;
-            ss->updates = 1;
-            mem->sensor_stats_count++;
-        }else{
-            print(2,"Stats array is full!\n");
-        }
-    }
-}
-void work_user(char s[]){
-    char *s1;
-    char car[]="#";
-    s1 = strtok(s,car);
-    s1 = strtok(0,car);
-    if(strcmp(s1,"1")==0){
-        sensor_struct *ss;
-        sem_wait(print_mutex);
-        printf("Key Last Min Max Avg Count\n");
-        for(int i=0;i<config[2];i++){
-            ss = mem->sensor_stats_array+i;
-            if(i>= mem->sensor_stats_count)break;
-            printf("%s %d %d %d %f %d\n",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
-        }
-        sem_post(print_mutex);
-    }else if(strcmp(s1,"3")==0){
-        sensors_list *sl;
-        sem_wait(print_mutex);
-        printf("ID\n");
-        for (int i = 0; i < config[3]; i++){
-            sl = mem->sensors_array+i;
-            if(i>=mem->sensor_count)break;
-            printf("%s\n",sl->id);
-        }
-        sem_post(print_mutex);
-    }
-}
-void work(int worker_n){
-    sem_wait(print_mutex);
-    printf("worker %d starting\n",worker_n);
-    sem_post(print_mutex);
-    close(channels[worker_n][1]);
-    char c;
-    int i;
-    ssize_t size;
-    char s[123];
-    while (1){
-        size = read(channels[worker_n][0],s,sizeof(s));
-        if(size == -1){
-            time_t t = time(NULL);
-            sem_wait(print_mutex);
-            printf("Error reading from worker %d unamed_pipe: %s\n",worker_n,strerror(errno));
-            fprintf(log_file,"%s Error reading from SENSOR_PIPE: %s\n",ctime(&t),strerror(errno));
-            sem_post(print_mutex);
-        }
-        s[size]=0;//indicates end of line
-        sem_post(shm_mutex);
-
-        #ifdef DEBUG
-        sem_wait(print_mutex);
-        printf("WORKer %d : I've read: %s\n",worker_n,s);
-        sem_post(print_mutex);
-        #endif
-
-        //sleep((rand()%(3-1+1))+1);
-        i = 0;
-        do{
-            c = s[i];
-            i++;
-        } while (c!='#');
-        i+=2;
-        c = s[i];
-        if(c!=0){//Dados de um sensor
-            sem_wait(print_mutex);
-            printf("Worker a registar dados de sensor\n");
-            sem_post(print_mutex);
-            sem_wait(shm_mutex);
-            work_sensor(s);
-            sem_post(shm_mutex);
-        }else{//Dados de um user
-            sem_wait(print_mutex);
-            printf("User stuff\n");
-            sem_post(print_mutex);
-            sem_wait(shm_mutex);
-            work_user(s);
-            sem_post(shm_mutex);
-        }
-        sem_wait(shm_mutex);
-        mem->workers_array[worker_n] = false;
-        sem_post(shm_mutex);
-        sem_post(available_workers_sem);
-    }
-}
-void alerts_watcher(){
-    sem_wait(print_mutex);
-    printf("Alert Watcher created!\n");
-    sem_post(print_mutex);
-}
-void *console(){
-    // Opens the CONSOLE_PIPE for reading;
-    time_t t;
-    time(&t);
-    sem_wait(print_mutex);
-    printf("Console thread starting!\n");
-    fprintf(log_file,"%s Console thread starting!\n",ctime(&t));
-    sem_post(print_mutex);
-    if ((console_fd = open(CONSOLE_PIPE, O_RDONLY)) < 0) {
-        time(&t);
-        sem_wait(print_mutex);
-        perror("Cannot open CONSOLE_PIPE for reading");
-        fprintf(log_file,"%s Cannot open CONSOLE_PIPE for reading: %s",ctime(&t),strerror(errno));
-        sem_post(print_mutex);
-        exit(0);
-    }
-    #ifdef DEBUG
-    sem_wait(print_mutex);
-    printf("CONSOLE_PIPE opened!\n");
-    sem_post(print_mutex);
-    #endif
-    int read_return;
-    char s[123];
-    
-    while (1){
-        read_return = read(console_fd,s,sizeof(s));
-        time(&t);
-        if(read_return > 0){
-            #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("Recived from CONSOLE_PIPE: %s\n",s);
-            sem_post(print_mutex);
-            #endif
-            add_to_queue(1,s);
-        }else if (read_return == -1){
-            sem_wait(print_mutex);
-            perror("Error reading from CONSOLE_PIPE\n");
-            fprintf(log_file,"%s Error reading from CONSOLE_PIPE: %s\n",ctime(&t),strerror(errno));
-            sem_post(print_mutex);
-        }else printf("Console PIpe is empty\n");
-    }
-    return NULL;
-    
-}
-void *sensor(){
-    // Opens the SENSOR_PIPE for reading
-    time_t t;
-    time(&t);
-    sem_wait(print_mutex);
-    printf("Sensor thread starting!\n");
-    fprintf(log_file,"%s Sensor thread starting!\n",ctime(&t));
-    sem_post(print_mutex);
-    if ((sensor_fd = open(SENSOR_PIPE, O_RDONLY)) < 0) {
-        time(&t);
-        sem_wait(print_mutex);
-        perror("Cannot open SENSOR_PIPE for reading");
-        fprintf(log_file,"%s Cannot open SENSOR_PIPE for reading: %s",ctime(&t),strerror(errno));
-        sem_post(print_mutex);
-        exit(0);
-    }
-    #ifdef DEBUG
-    sem_wait(print_mutex);
-    printf("SENSOR_PIPE opened!\n");
-    sem_post(print_mutex);
-    #endif
-    int read_return;
-    char s[77];
-    
-    while (1){
-        read_return = read(sensor_fd,s,sizeof(s));
-        time(&t);
-
-        if(read_return > 0){
-            #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("Recived from SENSOR_PIPE: %s\n",s);
-            sem_post(print_mutex);
-            #endif
-            add_to_queue(0,s);
-        }else if (read_return == -1){
-            sem_wait(print_mutex);
-            perror("Error reading from SENSOR_PIPE\n");
-            fprintf(log_file,"%s Error reading from SENSOR_PIPE: %s\n",ctime(&t),strerror(errno));
-            sem_post(print_mutex);
-        }else printf("Sensor PIpe is empty\n");
-    }
-    return NULL;
 }
 void sigint_handler(){
     //INTERNAL_QUEUE *ptr;
@@ -425,29 +130,343 @@ void sigint_handler(){
     fclose(log_file);
     exit(0);
 }
-void *dispatch(){
-    time_t t;
-    time(&t);
-    sem_wait(print_mutex);
-    printf("Dispatch thread starting!\n");
-    fprintf(log_file,"%s Dispatch thread starting!\n",ctime(&t));
+void add_to_queue(short int priority,char content[]){
+    INTERNAL_QUEUE *ptr,*aux_ptr,*pre_aux_ptr;
+
+    pthread_mutex_lock(&queue_mutex);
+    if(cur_queue_sz < config[0] || priority > 0){// if the queue is not full or if it has priority
+        while(cur_queue_sz >= config[0]){//if the queue is full but the content has priority it waits unitl the queue has some space left
+            #ifdef DEBUG
+            print(2,"Priority content waiting for queue to free 1 space");
+            #endif
+            pthread_cond_wait(&queue_full_cond,&queue_mutex);
+            #ifdef DEBUG
+            print(2,"Priority content waited and now will procced");
+            #endif
+        }
+        ptr = (INTERNAL_QUEUE*)malloc(sizeof(INTERNAL_QUEUE));
+        strcpy(ptr->msg,content);
+        ptr->priority = priority;
+        ptr->next = NULL;
+
+        if (head->start == NULL){//if the queue is empty
+            head->start = ptr;
+            head->end = ptr;
+        }else if(!priority){//if it isn't empty and doesn't have priority it goes to the end
+            head->end->next = ptr;
+            head->end = ptr;
+        }else{
+            aux_ptr = head->start;
+            pre_aux_ptr = head->start;
+            while(aux_ptr->priority > 0){
+                pre_aux_ptr = aux_ptr;
+                aux_ptr = aux_ptr->next;
+            }
+            if(aux_ptr != pre_aux_ptr){
+                pre_aux_ptr->next = ptr;
+                ptr->next = aux_ptr;
+            }else{
+                head->start = ptr;
+                ptr->next = aux_ptr;
+            }
+        }
+        cur_queue_sz++;
+
+    }else{
+        char temp[123];
+        sprintf(temp,"QUEUE IS FULL:%s discarted",content);
+        print(0,temp);
+        }
+    pthread_cond_signal(&queue_empty_cond);
+    pthread_mutex_unlock(&queue_mutex);
+}
+
+/// @brief pops the first element of the queue
+short int pop_queue(char dest_string[]){
+    INTERNAL_QUEUE *ptr;
+    ptr = head->start;
+    if (ptr == NULL)return 0;//nothing to pop
+    head->start = ptr->next;
+    strcpy(dest_string,ptr->msg);
+    if(head->start == NULL)head->end = NULL;//if the queue is now empty
+    cur_queue_sz--;
+    free(ptr);
+    return 1;
+} 
+void work_sensor(char s[]){
+    char *id,*key,*value;//tokens
+    char car[] = "#";
+    int i,val;
+    bool found = false;
+    id = strtok(s,car);
+    
+    for(i=0;i<config[3];i++){
+        if(i>= mem->sensor_count)break;
+        if(strcmp(id,(mem->sensors_array+i)->id)==0){//if id was found
+            found = true;
+            break;
+        }
+    }
+    
+    if(!found){//if it was not found
+        if(mem->sensor_count<config[3]){//if sensor list is not full
+            strcpy((mem->sensors_array+i)->id,id);
+            mem->sensor_count++;
+        }else print(0,"Sensors list is Full!");
+    }
+    key = strtok(0,car);
+    value = strtok(0,car);
+    
+    found = false;
+    for (i = 0; i < config[2]; i++){
+        if(i >= mem->sensor_stats_count)break;
+        if(strcmp(key,(mem->sensor_stats_array+i)->key)==0){
+            found = true;
+            break;
+        }
+    }
+    
+    val = atoi(value);
+    sensor_struct *ss = mem->sensor_stats_array+i;
+    
+    if(found){//if the key was found
+        ss->average = (ss->updates * ss->average + val)/(ss->updates + 1);
+        ss->last_value = val;
+        ss->updates++;
+        if(val > ss->max)ss->max = val;
+        else if(val < ss->min)ss->min = val;
+    }else{//if not found
+        if(mem->sensor_stats_count < config[2]){
+            strcpy(ss->key,key);
+            ss->average = ss->last_value = ss->max = ss->min = val;
+            ss->updates = 1;
+            mem->sensor_stats_count++;
+        }else{
+            print(0,"Stats array is full!");
+        }
+    }
+}
+void error_sending(char id[]){
+    char temp[300];
+    sprintf(temp,"Error sending message to %s: %s",id,strerror(errno));
     sem_post(print_mutex);
+    print(0,temp);
+    sem_wait(print_mutex);
+}
+void work_user(char s[]){
+    char *id,*s1;
+    char car[]="#";
+    MSG msg;
+    id = strtok(s,car);
+    msg.mtype = atol(id);
+    s1 = strtok(0,car);
+    if(strcmp(s1,"1")==0){
+        sensor_struct *ss;
+        #ifdef DEBUG
+        sem_wait(print_mutex);
+        printf("Key Last Min Max Avg Count\n");
+        #endif
+        strcpy(msg.content,"Key Last Min Max Avg Count");
+        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+            error_sending(id);
+        }
+        for(int i=0;i<config[2];i++){
+            ss = mem->sensor_stats_array+i;
+            if(i>= mem->sensor_stats_count)break;
+            #ifdef DEBUG
+            printf("%s %d %d %d %f %d\n",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
+            #endif
+            sprintf(msg.content,"%s %d %d %d %f %d",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
+            if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                error_sending(id);
+            }
+        }
+        #ifdef DEBUG
+        sem_post(print_mutex);
+        #endif
+    }else if(strcmp(s1,"2")==0){
+        mem->sensor_count = 0;
+        mem->sensor_stats_count = 0;
+        #ifdef DEBUG
+        print(2,"OK");
+        #endif
+        strcpy(msg.content,"OK");
+        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+            error_sending(id);
+        }
+    }else if(strcmp(s1,"3")==0){
+        sensors_list *sl;
+        #ifdef DEBUG
+        sem_wait(print_mutex);
+        printf("ID\n");
+        #endif
+        strcpy(msg.content,"ID");
+        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+            error_sending(id);
+        }
+        for (int i = 0; i < config[3]; i++){
+            sl = mem->sensors_array+i;
+            if(i>=mem->sensor_count)break;
+            #ifdef DEBUG
+            printf("%s\n",sl->id);
+            #endif
+            sprintf(msg.content,"%s",sl->id);
+            if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                error_sending(id);
+            }
+        }
+        #ifdef DEBUG
+        sem_post(print_mutex);
+        #endif
+    }
+}
+void work(int worker_n,int channel[]){
+    close(channel[1]);
+    char c;
+    int i;
+    ssize_t size;
+    char s[123];
+    char temp[200];
+    sprintf(s,"WORKER %d READY",worker_n);
+    print(0,s);
+    while (1){
+        size = read(channel[0],s,sizeof(s));
+        if(size == -1){
+            char temp[300];
+            sprintf(temp,"Error reading on worker %d unamed_pipe: %s",worker_n,strerror(errno));
+            print(0,temp);
+        }
+        s[size]=0;//indicates end of line
+        sem_post(shm_mutex);
+
+        i = 0;
+        do{
+            c = s[i];
+            i++;
+        } while (c!='#');
+        i+=2;
+        c = s[i];
+        if(c!=0){//Dados de um sensor
+            #ifdef DEBUG
+            print(2,"Worker a registar dados de sensor");
+            #endif
+            sem_wait(shm_mutex);
+            work_sensor(s);
+            sem_post(shm_mutex);
+        }else{//Dados de um user
+            #ifdef DEBUG
+            print(2,"User stuff\n");
+            #endif
+            sem_wait(shm_mutex);
+            work_user(s);
+            sem_post(shm_mutex);
+        }
+
+        sprintf(temp,"WORKER %d:%s PROCESSING COMPLETE",worker_n,s);
+        print(0,temp);
+        sem_wait(shm_mutex);
+        mem->workers_array[worker_n] = false;
+        sem_post(shm_mutex);
+        sem_post(available_workers_sem);
+    }
+}
+void alerts_watcher(){
+    print(0,"Alert Watcher created!");
+}
+void *console(){
+    // Opens the CONSOLE_PIPE for reading;
+
+    char s[123];
+    print(0,"Console thread starting!");
+    while (1){
+        if ((console_fd = open(CONSOLE_PIPE, O_RDONLY)) < 0) {
+            sprintf(s,"Cannot open CONSOLE_PIPE for reading: %s",strerror(errno));
+            print(0,s);
+            exit(0);
+        }
+        #ifdef DEBUG
+        print(2,"CONSOLE_PIPE opened!");
+        #endif
+        int read_return;
+        
+        while (1){
+            read_return = read(console_fd,s,sizeof(s));
+            if(read_return > 0){
+                #ifdef DEBUG
+                sem_wait(print_mutex);
+                printf("Recived from CONSOLE_PIPE: %s\n",s);
+                sem_post(print_mutex);
+                #endif
+                add_to_queue(1,s);
+            }else if (read_return == -1){
+                sprintf(s,"Error reading from CONSOLE_PIPE: %s",strerror(errno));
+                print(0,s);
+            }else{
+                close(console_fd);
+                print(2,"CONSOLE_PIPE closed: There are no more pipes opened on the other end");
+                break;
+            }
+        }
+    }
+    return NULL;
+    
+}
+void *sensor(){
+    // Opens the SENSOR_PIPE for reading
+
+    char s[123];
+    print(0,"Sensor thread starting!");
+    while (1){
+        if ((sensor_fd = open(SENSOR_PIPE, O_RDONLY)) < 0) {
+            sprintf(s,"Cannot open SENSOR_PIPE for reading: %s",strerror(errno));
+            print(0,s);
+            exit(0);
+        }
+        #ifdef DEBUG
+        print(2,"SENSOR_PIPE opened!");
+        #endif
+        int read_return;
+        
+        while (1){
+            read_return = read(sensor_fd,s,sizeof(s));
+            
+            if(read_return > 0){
+                #ifdef DEBUG
+                sem_wait(print_mutex);
+                printf("Recived from SENSOR_PIPE: %s\n",s);
+                sem_post(print_mutex);
+                #endif
+                add_to_queue(0,s);
+            }else if (read_return == -1){
+                sprintf(s,"Error reading from SENSOR_PIPE: %s",strerror(errno));
+                print(0,s);
+            }else{
+                close(sensor_fd);
+                print(2,"SENSOR_PIPE closed: There aren't any connections on the other end");
+                break;
+            }
+        }
+    }
+    return NULL;
+}
+void *dispatch(void *arg){
+    int (*channels)[2] = arg;
+    char s[123];
+    char temp[200];
+    print(0,"Dispatch thread starting!");
     
     struct sigaction new;
     new.sa_handler = sigint_handler;
     new.sa_flags = 0;
     sigfillset(&new.sa_mask);
     sigaction(SIGINT,&new,NULL);
-    char s[123];
-    int x,y;
+    int x;
 
     while (1){
         pthread_mutex_lock(&queue_mutex);
         while (cur_queue_sz < 1){
             #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("QUEUE is empty! Nothing to pop!\n");
-            sem_post(print_mutex);
+            print(2,"QUEUE is empty! Nothing to pop!");
             #endif
             pthread_cond_wait(&queue_empty_cond,&queue_mutex);
         }
@@ -456,9 +475,8 @@ void *dispatch(){
         pthread_mutex_unlock(&queue_mutex);
         if(x){
             #ifdef DEBUG
-            sem_wait(print_mutex);
-            printf("Removed from queue: %s\n",s);
-            sem_post(print_mutex);
+            sprintf(temp,"Removed from queue: %s",s);
+            print(2,temp);
             #endif
             sem_wait(available_workers_sem);
             for (int i = 0; i < config[1]; i++){
@@ -466,14 +484,15 @@ void *dispatch(){
                 if(!mem->workers_array[i]){//if worker not occupied
                     mem->workers_array[i]=true;
                     sem_post(shm_mutex);
+                    sprintf(temp,"DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d",s,i);
+                    print(0,temp);
                     write(channels[i][1],s,strlen(s)+1);
                     break;
                 }
                 sem_post(shm_mutex);
                 #ifdef DEBUG
-                sem_wait(print_mutex);
-                printf("Worker %d is occupied!\n",i);
-                sem_post(print_mutex);
+                sprintf(temp,"Worker %d is occupied!",i);\
+                print(2,temp);
                 #endif
             }
         }
@@ -575,14 +594,19 @@ int main(int argc, char const *argv[]){
 
     mem->sensor_stats_count = mem->sensor_count = mem->alerts_count = 0;
 
-    //strcpy(mem->sensors_array[0].id,"Hello");
-    //strcpy(mem->sensors_array[1].id,"There");
-
-    //printf("%d\n", mem->workers_array+1);
-    //printf("%d\n",mem->sensor_stats_array+1);
-    //printf("%s\n",mem->sensors_array[0].id);
-    //printf("%s\n",mem->sensors_array[1].id);
-    //printf("%d\n",mem->alerts_array+1);
+    key_t key = ftok("user_console.c",'B');
+    if (key==-1){
+        perror("Error on ftok key generation");
+        shmctl(shmid, IPC_RMID, NULL);
+        exit(0);
+    }
+    
+    msqid = msgget(key,IPC_CREAT|0700);
+    if(msqid == -1){
+        perror("Cannot get message queue");
+        shmctl(shmid, IPC_RMID, NULL);
+        exit(0);
+    }
 
     sem_unlink("AVAILABLE_WORKERS");
 	available_workers_sem = sem_open("AVAILABLE_WORKERS",O_CREAT|O_EXCL,0700,config[1]);
@@ -591,8 +615,9 @@ int main(int argc, char const *argv[]){
 	sem_unlink("PRINT_MUTEX");
 	print_mutex =sem_open("PRINT_MUTEX",O_CREAT|O_EXCL,0700,1);
 
+    int channels[config[1]][2];
     __pid_t pid;
-    
+
     for (int i = 0; i < config[1]; i++){
         pipe(channels[i]);
         pid = fork();
@@ -600,7 +625,7 @@ int main(int argc, char const *argv[]){
             print_mutex = sem_open("PRINT_MUTEX",0);
             shm_mutex = sem_open("SHM_MUTEX",0);
             available_workers_sem = sem_open("AVAILABLE_WORKERS",0);
-            work(i);
+            work(i,channels[i]);
             exit(0);
         }else if(pid ==-1){
             print(0,"Erro worker creation");
@@ -616,10 +641,19 @@ int main(int argc, char const *argv[]){
         print(0,"Erro worker creation");
         exit(0);
     }
-
-    pthread_create(&console_reader,NULL,console,NULL);
-    pthread_create(&sensor_reader,NULL,sensor,NULL);
-    pthread_create(&dispatcher,NULL,dispatch,NULL);
+    int erro;
+    erro = pthread_create(&console_reader,NULL,console,NULL);
+    if(erro != 0){
+        print(0,strerror(erro));
+    }
+    erro=pthread_create(&sensor_reader,NULL,sensor,NULL);
+    if(erro != 0){
+        print(0,strerror(erro));
+    }
+    erro=pthread_create(&dispatcher,NULL,dispatch,channels);
+    if(erro != 0){
+        print(0,strerror(erro));
+    }
 
     pthread_join(console_reader,NULL);
     pthread_join(sensor_reader,NULL);
