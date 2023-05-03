@@ -56,7 +56,7 @@ int main(int argc, char const *argv[]){
         printf("Sintaxe do comando a executar na linha de comando:\n$ user_console {identificador da consola}\n");
         exit(0);
     }
-    if(!checker(-1,argv[1])){
+    if(!is_int(-1,argv[1])){
         printf("O parâmetro identificador da consola tem de ser um valor inteiro superior a 0\n");
         exit(0);
     }
@@ -130,11 +130,8 @@ int main(int argc, char const *argv[]){
                 printf("%s",sintaxe);
                 continue;
             }
-            s4 = strtok(0, car);
+            s4 = strtok(0,"\n");
             int size = strlen(s4);
-            if (size > 2){
-                s4[strlen(s4)-1]=0;// replaces '\n' with '\0'
-            }
             if (s4 == 0 || !is_int(0,s4)){
                 printf("[max] tem de ser um inteiro!\n");
                 printf("%s",sintaxe);
@@ -147,11 +144,8 @@ int main(int argc, char const *argv[]){
             char sintaxe[] = "Verifique a sintaxe: remove_alert [id]\n";
             char *id;//token
             strtok(input, car);//ignores "remove_alert"
-            id = strtok(0, car);
+            id = strtok(0,"\n");
             size = strlen(id);
-            if (size > 2){
-                id[size-1]='\0';//replaces '\n' with '\0'
-            }
             if (id == 0 || !checker(0,id)){//token == 0 so if it is no more input
                 printf("O id de um alerta é um código alfanumérico com um tamanho mínimo de 3 caracteres e máximo de 32 caracteres!\n");
                 printf("%s",sintaxe);

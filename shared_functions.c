@@ -20,7 +20,7 @@ int checker(short int accepts_underline,const char string[]){
     return 1;
     
 }
-/// @param flag if < 0 only accepts unsigned ints bigger than 0, if == 0 accepts only unsigned ints, if > 0 only accepts int, 
+/// @param flag if < 0 only accepts unsigned ints bigger than 0, if > 0 accepts only unsigned ints, if == 0 only accepts int, 
 /// @param string 
 /// @return 
 int is_int(short int flag,const char string[]){
@@ -32,7 +32,7 @@ int is_int(short int flag,const char string[]){
     if ((flag > 0) && (value < 0 || value > UINT_MAX))return 0;//UINT_MAX from limits.h contains the max number for a unsigned int
     else if(flag==0){
         if (value < INT_MIN || value > INT_MAX)return 0;
-    }else if(value < 0)return 0;
+    }else if(value < 1)return 0;
     
     for (int i = 0; i < lenght; i++){
         if(string[i]<48 || string[i]>57){

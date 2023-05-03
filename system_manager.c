@@ -28,7 +28,7 @@ João Querido  2021240660
 #define N_WORKERS 5
 
 typedef struct INTERNAL_QUEUE{
-    char msg[123];
+    char msg[125];
     short int priority;
     struct INTERNAL_QUEUE *next;
 }INTERNAL_QUEUE;
@@ -38,21 +38,23 @@ typedef struct INTERNAL_QUEUE_HEAD{
     INTERNAL_QUEUE *end;
 }INTERNAL_QUEUE_HEAD;
 typedef struct sensors_list{
-    char id[33];
+    char id[32];
 }sensors_list;
 typedef struct sensor_struct{
     //char **key;
-    char key[33];
+    char key[32];
     int last_value,min,max,updates;
     double average;
 }sensor_struct;
 typedef struct alert_struct{
     int min,max,user_console_id;
+    char id[32];
     char key[32];
 }alert_struct;
 typedef struct{
     int sensor_stats_count,sensor_count,alerts_count;
     bool *workers_array;//if 0 is free otherwise is working
+    pthread_cond_t alerts_cond;
     sensor_struct *sensor_stats_array;
     sensors_list *sensors_array;
     alert_struct *alerts_array;
@@ -200,8 +202,7 @@ void work_sensor(char s[]){
     bool found = false;
     id = strtok(s,car);
     
-    for(i=0;i<config[3];i++){
-        if(i>= mem->sensor_count)break;
+    for(i=0;i<mem->sensor_count;i++){
         if(strcmp(id,(mem->sensors_array+i)->id)==0){//if id was found
             found = true;
             break;
@@ -209,17 +210,19 @@ void work_sensor(char s[]){
     }
     
     if(!found){//if it was not found
-        if(mem->sensor_count<config[3]){//if sensor list is not full
+        if(mem->sensor_count<=config[3]){//if sensor list is not full
             strcpy((mem->sensors_array+i)->id,id);
             mem->sensor_count++;
-        }else print(0,"Sensors list is Full!");
+        }else{
+            print(0,"Sensors list is Full!");
+            return;
+            }
     }
     key = strtok(0,car);
     value = strtok(0,car);
     
     found = false;
-    for (i = 0; i < config[2]; i++){
-        if(i >= mem->sensor_stats_count)break;
+    for (i = 0; i < mem->sensor_stats_count; i++){
         if(strcmp(key,(mem->sensor_stats_array+i)->key)==0){
             found = true;
             break;
@@ -236,15 +239,18 @@ void work_sensor(char s[]){
         if(val > ss->max)ss->max = val;
         else if(val < ss->min)ss->min = val;
     }else{//if not found
-        if(mem->sensor_stats_count < config[2]){
+        if(mem->sensor_stats_count <= config[2]){
             strcpy(ss->key,key);
             ss->average = ss->last_value = ss->max = ss->min = val;
             ss->updates = 1;
             mem->sensor_stats_count++;
         }else{
             print(0,"Stats array is full!");
+            return;
         }
     }
+    pthread_cond_signal(&mem->alerts_cond);
+    print(2,"Fiz cond_signal\n");
 }
 void error_sending(char id[]){
     char temp[300];
@@ -318,12 +324,81 @@ void work_user(char s[]){
         #ifdef DEBUG
         sem_post(print_mutex);
         #endif
+    }else if(strcmp(s1,"4")==0){
+        alert_struct *alert_p = mem->alerts_array;
+        int i;
+        s1 = strtok(0,car);
+        for (i = 0; i < mem->alerts_count; i++){
+            if(strcmp((alert_p+i)->id,s1)==0){
+                sprintf(msg.content,"ERROR: %s alert id already exists",s1);
+                if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                    error_sending(id);
+                }
+                return;
+            }
+        }
+        // if not found and the number of alerts is within count then it can be added
+        if(i<=mem->alerts_count){
+            alert_p+=i;
+            strcpy(alert_p->id,s1);
+            s1 = strtok(0,car);
+            strcpy(alert_p->key,s1);
+            s1 = strtok(0,car);
+            alert_p->min = atoi(s1);
+            s1 = strtok(0,car);
+            alert_p->max = atoi(s1);
+            alert_p->user_console_id = atoi(id);
+            strcpy(msg.content,"OK");
+            mem->alerts_count++;
+            if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                error_sending(id);
+            }
+        }else{
+            sprintf(msg.content,"ERROR: %s: alerts list is full",s1);
+            if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                error_sending(id);
+            }
+            return;
+        }
+    }else if(strcmp(s1,"5")==0){
+        alert_struct *alert_p = mem->alerts_array;
+        int i;
+        s1 = strtok(0,car);//alert id
+        for (i = 0; i < mem->alerts_count; i++){
+            if(strcmp((alert_p+i)->id,s1)==0){
+                *(alert_p+i) = *(alert_p+(mem->alerts_count-1));//copies the last alert on the list to the place where the alert was removed
+                mem->alerts_count--;
+                strcpy(msg.content,"OK");
+                if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                    error_sending(id);
+                }
+                return;
+            }
+        }
+        sprintf(msg.content,"ERRO: %s alert id doesn't exists",s1);
+        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+            error_sending(id);
+        }
+    }else if(strcmp(s1,"6")==0){
+        alert_struct *alert_p = mem->alerts_array;
+        strcpy(msg.content,"ID Key MIN MAX");
+        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+            error_sending(id);
+        }
+        for (int i = 0; i < mem->alerts_count; i++){
+            sprintf(msg.content,"%s %s %d %d",alert_p->id,alert_p->key,alert_p->min,alert_p->max);
+            if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                error_sending(id);
+            }
+            alert_p++; 
+        }
+    }else{
+        char temp[200];
+        sprintf(temp,"Error: BAD COMMAND: %s\n",s);
     }
 }
 void work(int worker_n,int channel[]){
     close(channel[1]);
-    char c;
-    int i;
     ssize_t size;
     char s[123];
     char temp[200];
@@ -338,15 +413,7 @@ void work(int worker_n,int channel[]){
         }
         s[size]=0;//indicates end of line
         sem_post(shm_mutex);
-
-        i = 0;
-        do{
-            c = s[i];
-            i++;
-        } while (c!='#');
-        i+=2;
-        c = s[i];
-        if(c!=0){//Dados de um sensor
+        if(s[strlen(s)-1]=='S'){//Dados de um sensor
             #ifdef DEBUG
             print(2,"Worker a registar dados de sensor");
             #endif
@@ -372,6 +439,36 @@ void work(int worker_n,int channel[]){
 }
 void alerts_watcher(){
     print(0,"Alert Watcher created!");
+    alert_struct *alert;
+    sensor_struct *sensor_stats;
+    pthread_mutex_t *temp_mutex;
+    pthread_mutex_init(temp_mutex,NULL);
+    pthread_mutex_lock(temp_mutex);
+    while (1){
+        printf("!!!!!!!!!!%d!!!!!!!!!!\n",pthread_cond_wait(&mem->alerts_cond,temp_mutex));
+        print(2,"Recebi cond_signal");
+        sem_wait(shm_mutex);
+        alert = mem->alerts_array;
+        sensor_stats = mem->sensor_stats_array;
+        for (int i = 0; i < mem->alerts_count; i++){
+            for (int j = 0; j < mem->sensor_stats_count; j++){
+                if(strcmp(alert->key,sensor_stats->key)==0){
+                    if(sensor_stats->last_value<alert->min || sensor_stats->last_value>alert->max){
+                        MSG msg;
+                        sprintf(msg.content,"ALERT %s TRIGERED",alert->id);
+                        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+                            error_sending((alert->user_console_id)+"");
+                        }
+                        print(0,msg.content);
+                    }
+                }
+                sensor_stats++;
+            }
+            alert++;
+        }
+        sem_post(shm_mutex);
+    }
+    
 }
 void *console(){
     // Opens the CONSOLE_PIPE for reading;
@@ -397,6 +494,7 @@ void *console(){
                 printf("Recived from CONSOLE_PIPE: %s\n",s);
                 sem_post(print_mutex);
                 #endif
+                strcat(s,"#C");
                 add_to_queue(1,s);
             }else if (read_return == -1){
                 sprintf(s,"Error reading from CONSOLE_PIPE: %s",strerror(errno));
@@ -436,6 +534,7 @@ void *sensor(){
                 printf("Recived from SENSOR_PIPE: %s\n",s);
                 sem_post(print_mutex);
                 #endif
+                strcat(s,"#S");
                 add_to_queue(0,s);
             }else if (read_return == -1){
                 sprintf(s,"Error reading from SENSOR_PIPE: %s",strerror(errno));
@@ -516,7 +615,7 @@ int main(int argc, char const *argv[]){
         fclose(log_file);
         exit(0);
     }
-    if(access(argv[1],R_OK)==0){//tests if the file exits and if it has read permissions
+    if(access(argv[1],R_OK)==0){//tests if the file exists and if it has read permissions
         config_file = fopen(argv[1],"r");
     }else{
         time(&t);
@@ -587,6 +686,14 @@ int main(int argc, char const *argv[]){
     printf("Shared memory attached!\n");
     #endif
 
+    if(pthread_cond_init(&mem->alerts_cond,NULL)==-1){
+        time(&t);
+        perror("Erro na criação da variável de condição dos alert watcher");
+        fprintf(log_file,"%s Erro na criação da variável de condição dos alert watcher: %s\n",ctime(&t),strerror(errno));
+        shmctl(shmid, IPC_RMID, NULL);
+        fclose(log_file);
+        exit(0);
+    }
     mem->workers_array = (bool*) (mem+1);
     mem->sensor_stats_array = (sensor_struct*)(mem->workers_array + config[1]);
     mem->sensors_array = (sensors_list*)(mem->sensor_stats_array + config[2]);
@@ -596,15 +703,21 @@ int main(int argc, char const *argv[]){
 
     key_t key = ftok("user_console.c",'B');
     if (key==-1){
+        time(&t);
         perror("Error on ftok key generation");
+        fprintf(log_file,"%s Error on ftok key generation: %s\n",ctime(&t),strerror(errno));
         shmctl(shmid, IPC_RMID, NULL);
+        pthread_cond_destroy(&mem->alerts_cond);
         exit(0);
     }
     
     msqid = msgget(key,IPC_CREAT|0700);
     if(msqid == -1){
-        perror("Cannot get message queue");
+        time(&t);
+        perror("Error Cannot get message queue");
+        fprintf(log_file,"%s Error Cannot get message queue: %s\n",ctime(&t),strerror(errno));
         shmctl(shmid, IPC_RMID, NULL);
+        pthread_cond_destroy(&mem->alerts_cond);
         exit(0);
     }
 
@@ -625,11 +738,14 @@ int main(int argc, char const *argv[]){
             print_mutex = sem_open("PRINT_MUTEX",0);
             shm_mutex = sem_open("SHM_MUTEX",0);
             available_workers_sem = sem_open("AVAILABLE_WORKERS",0);
+            
             work(i,channels[i]);
             exit(0);
         }else if(pid ==-1){
-            print(0,"Erro worker creation");
-            exit(0);
+            char temp_s[100];
+            sprintf(temp_s,"Erro worker creation: %s",strerror(errno));
+            print(0,temp_s);
+            sigint_handler();
         }
         close(channels[i][0]);
     }
@@ -638,8 +754,10 @@ int main(int argc, char const *argv[]){
         alerts_watcher();
         exit(0);
     }else if(pid ==-1){
-        print(0,"Erro worker creation");
-        exit(0);
+        char temp_s[100];
+        sprintf(temp_s,"Erro alert_watcher creation: %s",strerror(errno));
+        print(0,temp_s);
+        sigint_handler();
     }
     int erro;
     erro = pthread_create(&console_reader,NULL,console,NULL);
