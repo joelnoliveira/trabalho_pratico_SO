@@ -25,7 +25,6 @@ João Querido  2021240660
 #define CONSOLE_PIPE "CONSOLE_PIPE"
 #define LOG_FILE "log.txt"
 #define DEBUG
-#define N_WORKERS 5
 
 typedef struct INTERNAL_QUEUE{
     char msg[125];
@@ -135,44 +134,12 @@ void cleaner(){
         print(2,strerror(errno));
     }
     exit(0);
-    /*
-    fclose(config_file);
-    pthread_mutex_lock(&queue_mutex);
-    while (head->start!=NULL){
-        ptr = head->start;
-        head->start = ptr->next;
-        free(ptr);
-    }
-    free(head);
-    pthread_mutex_destroy(&queue_mutex);
-    pthread_cond_destroy(&queue_full_cond);
-    pthread_cond_destroy(&queue_empty_cond);
-    close(sensor_fd);
-    close(console_fd);
-    unlink(SENSOR_PIPE);
-    unlink(CONSOLE_PIPE);
-    time(&t);
-    printf("HOME_IOT SIMULATOR CLOSING\n");
-    fprintf(log_file,"%s HOME_IOT SIMULATOR CLOSING\n",ctime(&t));
-
-    sem_close(print_mutex);
-    sem_close(shm_mutex);
-    sem_close(available_workers_sem);
-    sem_unlink("PRINT_MUTEX");
-    sem_unlink("SHM_MUTEX");
-    sem_unlink("AVAILABLE_WORKERS");
-
-    fclose(log_file);
-    exit(0);*/
 }
 void handler(int signo){
-    //INTERNAL_QUEUE *ptr;
     pthread_t current_thread = pthread_self();
     pid_t current_process = getpid();
     int return_value;
     if(signo==SIGINT){
-        INTERNAL_QUEUE *temp;
-        print(0,"Hello THere");
         if(current_thread != console_reader && current_thread != sensor_reader && current_thread != dispatcher){//then it is the main thread
             print(0,"SIGINT recived");
             print(0,"HOME_IOT is going to close");
@@ -189,10 +156,12 @@ void handler(int signo){
                 print(0,strerror(return_value));
             }
             print(0,"All threads closed");
+            pthread_mutex_destroy(&queue_mutex);
+            pthread_cond_destroy(&queue_full_cond);
+            pthread_cond_destroy(&queue_empty_cond);
         }
     }else{
         if (current_process!=alerts_watcher_process_id){
-            //close(global_channel);//so when worker is ready to read from the unnamed pipe, it will return EOF
             sem_wait(shm_mutex);
             if(!*(mem->workers_array+worker_global_n)){//if worken is not working, then it can already exit
                 print(0,"Worker exiting through worker_sigint_handler!");
@@ -331,7 +300,6 @@ void work_sensor(char s[]){
         }
     }
     sem_post(sensor_stats_mutex);
-    print(2,"Fiz cond_signal\n");
 }
 void error_sending(char id[]){
     char temp[300];
@@ -478,15 +446,13 @@ void work_user(char s[]){
         sprintf(temp,"Error: BAD COMMAND: %s\n",s);
     }
 }
-void work(int worker_n,int channel[]){
-    worker_global_n = worker_n;
-    global_channel = channel[0];
+void work(int channel[]){
     close(channel[1]);
     ssize_t size;
     char s[123];
     char temp[200];
     
-    sprintf(s,"WORKER %d READY",worker_n);
+    sprintf(s,"WORKER %d READY",worker_global_n);
     print(0,s);
     while (1){
         size = read(channel[0],s,sizeof(s));
@@ -494,7 +460,7 @@ void work(int worker_n,int channel[]){
             handler(SIGCHLD);
         }else if(size == -1){
             char temp[300];
-            sprintf(temp,"Error reading on worker %d unamed_pipe: %s",worker_n,strerror(errno));
+            sprintf(temp,"Error reading on worker %d unamed_pipe: %s",worker_global_n,strerror(errno));
             print(0,temp);
         }
         s[size]=0;//indicates end of line
@@ -504,7 +470,7 @@ void work(int worker_n,int channel[]){
             print(2,"Worker a registar dados de sensor");
             #endif
             sem_wait(shm_mutex);
-            sleep(worker_n+3);
+            sleep(worker_global_n+3);
             work_sensor(s);
             sem_post(shm_mutex);
         }else{//Dados de um user
@@ -512,15 +478,15 @@ void work(int worker_n,int channel[]){
             print(2,"User stuff\n");
             #endif
             sem_wait(shm_mutex);
-            sleep(worker_n+3);
+            sleep(worker_global_n+3);
             work_user(s);
             sem_post(shm_mutex);
         }
 
-        sprintf(temp,"WORKER %d:%s PROCESSING COMPLETE",worker_n,s);
+        sprintf(temp,"WORKER %d:%s PROCESSING COMPLETE",worker_global_n,s);
         print(0,temp);
         sem_wait(shm_mutex);
-        *(mem->workers_array+worker_n) = false;
+        *(mem->workers_array+worker_global_n) = false;
         sem_post(shm_mutex);
         sem_post(available_workers_sem);
     }
@@ -531,7 +497,6 @@ void alerts_watcher(){
     sensor_struct *sensor_stats;
     while (1){
         sem_wait(sensor_stats_mutex);
-        print(2,"Recebi cond_signal");
         sem_wait(shm_mutex);
         alert = mem->alerts_array;
         for (int i = 0; i < mem->alerts_count; i++){
@@ -549,7 +514,6 @@ void alerts_watcher(){
                                 error_sending(temp);
                             }
                             print(0,msg.content);
-                            sensor_stats->alerted = true;
                         }
                     }
                 }
@@ -557,6 +521,12 @@ void alerts_watcher(){
             }
             alert++;
         }
+        sensor_stats = mem->sensor_stats_array;
+        for (int i = 0; i < mem->sensor_stats_count; i++){
+            sensor_stats->alerted = true;
+            sensor_stats++;
+        }
+        
         sem_post(shm_mutex);
     }
     
@@ -796,12 +766,14 @@ int main(int argc, char const *argv[]){
     for (int i = 0; i < config[1]; i++){
         pipe(channels[i]);
         pid = fork();
-        if(pid == 0){
+        if(pid == 0){//if it is the son
             sigaction(SIGTERM,&new,NULL);
+            worker_global_n = i;
+            global_channel = channels[i][0];
             print_mutex = sem_open("PRINT_MUTEX",0);
             shm_mutex = sem_open("SHM_MUTEX",0);
             available_workers_sem = sem_open("AVAILABLE_WORKERS",0);
-            work(i,channels[i]);
+            work(channels[i]);
             exit(0);
         }else if(pid ==-1){
             char temp_s[100];
@@ -919,8 +891,8 @@ int main(int argc, char const *argv[]){
     }
     while (head->start!=NULL){
         temp = head->start->next;
-        printf("%s","Cleanig INTERNAL_QUEUE");
-        printf("%s",head->start->msg);
+        printf("%s\n","Cleanig INTERNAL_QUEUE");
+        printf("%s\n",head->start->msg);
         free(head->start);
         head->start = temp;
     }

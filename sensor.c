@@ -44,11 +44,14 @@ int main(int argc, char const *argv[]){
     exit(0);
    }
    
-
    int value,min,max,sleep_time;
    struct sigaction new,new2;
    min = atoi(argv[4]);
    max = atoi(argv[5]);
+   if(min > max && max < min){
+        printf("[min] não pode ser maior do que [max], nem vice-versa!\n");
+        exit(0);
+   }
    sleep_time = atoi(argv[2]);
    srand(time(NULL));
 

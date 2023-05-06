@@ -29,8 +29,8 @@ void *receive(){
     while (1){
         if(msgrcv(msqid, &msg, sizeof(msg)-sizeof(long),mtype, 0)==-1){
             perror("Error reciving message");
+            exit(0);
         }
-        printf("MSG TYPE: %ld\n",mtype);
         printf("%s\n",msg.content);
     }
     return NULL;
@@ -46,7 +46,7 @@ void sigpipe_and_sigint_handler(int signo){
     if(signo==SIGPIPE)printf("Error: Broken Pipe\n");
     close(fd);
     close(msqid);
-    kill(0,SIGTERM);
+    pthread_cancel(receiver);
     exit(0);
 }
 int main(int argc, char const *argv[]){
@@ -137,7 +137,15 @@ int main(int argc, char const *argv[]){
                 printf("%s",sintaxe);
                 continue;
             }
-            sprintf(output,"%s#4#%s#%s#%s#%s",argv[1],s1,s2,s3,s4);
+            int min,max;
+            min = atoi(s3);
+            max = atoi(s4);
+            if(min > max && max < min){
+                printf("[min] não pode ser maior do que [max], nem vice-versa!\n");
+                printf("%s",sintaxe);
+                continue;
+            }
+            sprintf(output,"%s#4#%s#%s#%d#%d",argv[1],s1,s2,min,max);
             accepted = 1;
         }else if (strncmp("remove_alert",input,12)==0){
             char sintaxe[] = "Verifique a sintaxe: remove_alert [id]\n";
