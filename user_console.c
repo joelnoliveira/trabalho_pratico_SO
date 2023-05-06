@@ -15,29 +15,29 @@ João Querido  2021240660
 
 #define DEBUG
 
-int fd,msqid;
-pthread_t receiver;
-
 typedef struct {
 long mtype;
 char content[88];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces + '\n'
 }MSG;
 
-void *receive(void *arg){
+int fd,msqid;
+pthread_t receiver;
+long mtype;
+
+void *receive(){
     MSG msg;
-    long value = atol(arg);
     while (1){
-        if(msgrcv(msqid, &msg, sizeof(msg)-sizeof(long),value, 0)==-1){
+        if(msgrcv(msqid, &msg, sizeof(msg)-sizeof(long),mtype, 0)==-1){
             perror("Error reciving message");
         }
+        printf("MSG TYPE: %ld\n",mtype);
         printf("%s\n",msg.content);
     }
     return NULL;
 }
-void create_thread(const char arg[]){
-    long value = atol(arg);
+void create_thread(){
     int erro;
-    erro = pthread_create(&receiver,NULL,receive,&value);
+    erro = pthread_create(&receiver,NULL,receive,NULL);
     if(erro != 0){
         printf("%s\n",strerror(erro));
     }
@@ -83,7 +83,8 @@ int main(int argc, char const *argv[]){
     sigfillset(&new.sa_mask);
     sigaction(SIGPIPE,&new,NULL);
     sigaction(SIGINT,&new,NULL);
-    create_thread(argv[1]);
+    mtype = atol(argv[1]);
+    create_thread();
     bool accepted;
     int write_return;
     const char car[] = " ";
@@ -131,7 +132,6 @@ int main(int argc, char const *argv[]){
                 continue;
             }
             s4 = strtok(0,"\n");
-            int size = strlen(s4);
             if (s4 == 0 || !is_int(0,s4)){
                 printf("[max] tem de ser um inteiro!\n");
                 printf("%s",sintaxe);
@@ -140,12 +140,10 @@ int main(int argc, char const *argv[]){
             sprintf(output,"%s#4#%s#%s#%s#%s",argv[1],s1,s2,s3,s4);
             accepted = 1;
         }else if (strncmp("remove_alert",input,12)==0){
-            int size;
             char sintaxe[] = "Verifique a sintaxe: remove_alert [id]\n";
             char *id;//token
             strtok(input, car);//ignores "remove_alert"
             id = strtok(0,"\n");
-            size = strlen(id);
             if (id == 0 || !checker(0,id)){//token == 0 so if it is no more input
                 printf("O id de um alerta é um código alfanumérico com um tamanho mínimo de 3 caracteres e máximo de 32 caracteres!\n");
                 printf("%s",sintaxe);
