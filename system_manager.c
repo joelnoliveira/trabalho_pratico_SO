@@ -162,9 +162,11 @@ void handler(int signo){
         }
     }else{
         if (current_process!=alerts_watcher_process_id){
+            char s[42];
             sem_wait(shm_mutex);
             if(!*(mem->workers_array+worker_global_n)){//if worken is not working, then it can already exit
-                print(0,"Worker exiting through worker_sigint_handler!");
+                sprintf(s,"Worker %d exiting",worker_global_n);
+                print(0,s);
                 return_value = close(global_channel);
                 if(return_value==-1){
                     print(0,strerror(errno));
@@ -172,6 +174,8 @@ void handler(int signo){
                 sem_post(shm_mutex);
             }else{ //other wise when it finishes is job it will read EOF because the unnamed pipe was closed on the father side
                 sem_post(shm_mutex);
+                sprintf(s,"Waiting for worker %d to finish",worker_global_n);
+                print(0,s);
                 return;
             }
         }else{//if it is alert_watcher process
@@ -470,7 +474,7 @@ void work(int channel[]){
             print(2,"Worker a registar dados de sensor");
             #endif
             sem_wait(shm_mutex);
-            sleep(worker_global_n+3);
+            //sleep(worker_global_n+3);
             work_sensor(s);
             sem_post(shm_mutex);
         }else{//Dados de um user
@@ -478,7 +482,7 @@ void work(int channel[]){
             print(2,"User stuff\n");
             #endif
             sem_wait(shm_mutex);
-            sleep(worker_global_n+3);
+            //sleep(worker_global_n+3);
             work_user(s);
             sem_post(shm_mutex);
         }
@@ -862,9 +866,7 @@ int main(int argc, char const *argv[]){
         print(0,strerror(errno));
     }
     print(0,"4");
-    while(waitpid((pid_t)-1,NULL,0)>0){//waits for the workers to finish their job, it may also wait for alerts_watcher
-        print(0,"Worker a fechar");
-    };
+    while(waitpid((pid_t)-1,NULL,0)>0);//waits for the workers to finish their job, it may also wait for alerts_watcher
     return_value = sem_unlink("AVAILABLE_WORKERS");
     if(return_value==-1){
         print(0,strerror(errno));
@@ -889,9 +891,9 @@ int main(int argc, char const *argv[]){
     if(return_value==-1){
         print(0,strerror(errno));
     }
+    printf("%s\n","Cleanig INTERNAL_QUEUE");
     while (head->start!=NULL){
         temp = head->start->next;
-        printf("%s\n","Cleanig INTERNAL_QUEUE");
         printf("%s\n",head->start->msg);
         free(head->start);
         head->start = temp;
