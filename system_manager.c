@@ -89,45 +89,39 @@ void print(short int function,char s[]){
     if(function == 0 || function == 1){
         time_t t;
         time(&t);
-        fprintf(log_file,"%s %s\n",ctime(&t),s);
+        char *c=ctime(&t);
+        c[strlen(c)-1]='\0';//deletes '\n'
+        fprintf(log_file,"%s %s\n",c,s);
         fflush(log_file);
     }
     sem_post(print_mutex);
 }
 void cleaner(){
     int return_value;
-    print(0,"FINAL TASKS");
-    print(0,"A");
+    pthread_mutex_destroy(&queue_mutex);
+    pthread_cond_destroy(&queue_full_cond);
+    pthread_cond_destroy(&queue_empty_cond);
     return_value = sem_close(available_workers_sem);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"B");
     return_value = sem_close(shm_mutex);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"C");
-    print(0,"D");
 
     return_value = sem_close(sensor_stats_mutex);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"E");
-    print(0,"F");
 
     return_value = shmdt(mem);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"G");
 
-    print(0,"H");
     signal(SIGINT,SIG_IGN);
-    print(0,"I");
     if(fclose(config_file)==EOF)print(0,strerror(errno));
-    print(0,"J");
     if(fclose(log_file)==EOF)print(2,strerror(errno));
     return_value = sem_close(print_mutex);
     if(return_value==-1){
@@ -156,9 +150,6 @@ void handler(int signo){
                 print(0,strerror(return_value));
             }
             print(0,"All threads closed");
-            pthread_mutex_destroy(&queue_mutex);
-            pthread_cond_destroy(&queue_full_cond);
-            pthread_cond_destroy(&queue_empty_cond);
         }
     }else{
         if (current_process!=alerts_watcher_process_id){
@@ -493,7 +484,7 @@ void work(int channel[]){
             print(2,"Worker a registar dados de sensor");
             #endif
             sem_wait(shm_mutex);
-            sleep(worker_global_n+3);//it is not for sincronization, its only to simulate a longer work
+            //sleep(worker_global_n+3);//it is not for sincronization, its only to simulate a longer work
             work_sensor(s);
             sem_post(shm_mutex);
         }else{//Dados de um user
@@ -501,7 +492,7 @@ void work(int channel[]){
             print(2,"User stuff\n");
             #endif
             sem_wait(shm_mutex);
-            sleep(worker_global_n+3);//it is not for sincronization, its only to simulate a longer work
+            //sleep(worker_global_n+3);//it is not for sincronization, its only to simulate a longer work
             work_user(s);
             sem_post(shm_mutex);
         }
@@ -676,6 +667,75 @@ void *dispatch(void *arg){
     //waitpid(-1,NULL,0);
     return NULL;
 }
+void startup_error_cleaner(int stage,char s[]){
+    time_t t;
+    time(&t);
+    char *c=ctime(&t);
+    pthread_mutex_destroy(&queue_mutex);
+    pthread_cond_destroy(&queue_full_cond);
+    pthread_cond_destroy(&queue_empty_cond);
+    if(stage==0){
+        printf("Erro, Sintaxe do comando a executar na linha de comando: $ home_iot {ficheiro de configuração}\n");
+        fprintf(log_file,"%s Erro, Sintaxe do comando a executar na linha de comando: $ home_iot {ficheiro de configuração}\n",c);
+    }
+    if(stage==1){
+        perror("Config_file error");
+        fprintf(log_file,"%s Config_file error: %s",c,strerror(errno));
+    }
+    if(stage>=2){
+        if(stage==2){
+            printf("Parâmetros insuficientes no ficheiro de configurações!\n");
+            fprintf(log_file,"%s Parâmetros insuficientes no ficheiro de configurações!\n",c);
+        }
+        fclose(config_file);
+        if(stage==3){
+            printf("Existe um ou mais parâmetros incorretos!\n");
+            fprintf(log_file,"%s Existe um ou mais parâmetros incorretos!\n",c);
+        }
+        if(stage>3){
+            perror(s);
+            fprintf(log_file,"%s %s: %s\n",c,s,strerror(errno));
+            if(stage>4){
+                shmctl(shmid, IPC_RMID, NULL);
+                if(stage>5){
+                    shmdt(mem);
+                    if(stage>6){
+                        msgctl(msqid, IPC_RMID, NULL);
+                        if(stage>7){
+                            sem_close(available_workers_sem);
+                            unlink("AVAILABLE_WORKERS");
+                            if(stage>8){
+                                sem_close(shm_mutex);
+                                unlink("SHM_MUTEX");
+                                if(stage>9){
+                                    sem_close(print_mutex);
+                                    unlink("PRINT_MUTEX");
+                                    if(stage>10){
+                                        sem_close(sensor_stats_mutex);
+                                        unlink("SENSOR_STATS_MUTEX");
+                                        if(stage>11){
+                                            close(console_fd);
+                                            unlink(CONSOLE_PIPE);
+                                            if(stage>12){
+                                                close(sensor_fd);
+                                                unlink(SENSOR_PIPE);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+
+    fflush(log_file);
+    fclose(log_file);
+    exit(0);
+}
 int main(int argc, char const *argv[]){
     signal(SIGINT,SIG_IGN);//ignores ctrl c
     signal(SIGTERM,SIG_IGN);
@@ -686,56 +746,43 @@ int main(int argc, char const *argv[]){
     }
     time_t t;
     time(&t);
-    fprintf(log_file,"%s HOME_IOT SIMULATOR STARTING\n",ctime(&t));
+    char *c=ctime(&t);
+    c[strlen(c)-1]='\0';//deletes '\n'
+    fprintf(log_file,"%s HOME_IOT SIMULATOR STARTING\n",c);
     fflush(log_file);
     if (argc < 2){
-        time(&t);
-        printf("Erro, Sintaxe do comando a executar na linha de comando: $ home_iot {ficheiro de configuração}\n");
-        fprintf(log_file,"%s Erro, Sintaxe do comando a executar na linha de comando: $ home_iot {ficheiro de configuração}\n",ctime(&t));
-        fclose(log_file);
-        exit(0);
+        startup_error_cleaner(0,"");
     }
     if(access(argv[1],R_OK)==0){//tests if the file exists and if it has read permissions
         config_file = fopen(argv[1],"r");
     }else{
-        time(&t);
-        perror("Config_file error");
-        fprintf(log_file,"%s Config_file error: %s",ctime(&t),strerror(errno));
-        fclose(log_file);
-        exit(0);
+        startup_error_cleaner(1,"");
     }
    
     char s[11];
     for (int i = 0; i < 5; i++){
         if(fgets(s,11,config_file)==NULL){
-            time(&t);
-            printf("Parâmetros insuficientes no ficheiro de configurações!\n");
-            fprintf(log_file,"%s Parâmetros insuficientes no ficheiro de configurações!\n",ctime(&t));
-            fclose(log_file);
-            fclose(config_file);
-            exit(0);
+            startup_error_cleaner(2,"");
         }
         config[i]=atoi(s);
         if (config[i] < 1){//the last element of the config file (MAX_ALERTS) can be 0
             time(&t);
+            char *c=ctime(&t);
+            c[strlen(c)-1]='\0';//deletes '\n'
             if (i<4 || config[i]<0){//but cannot be less than 0
-                printf("Existe um ou mais parâmetros incorretos!\n");
-                fprintf(log_file,"%s Existe um ou mais parâmetros incorretos!\n",ctime(&t));
-                fclose(log_file);
-                fclose(config_file);
-                exit(0);
+                startup_error_cleaner(3,"");
             }
         }
     }
     shmid = shmget(IPC_PRIVATE, sizeof(mem_struct)+config[1]*sizeof(bool)+config[2]*sizeof(sensor_struct)+config[3]*sizeof(sensors_list)+config[4]*sizeof(alert_struct), IPC_CREAT|0700);
-    if (shmid < 1) exit(0);
+    if (shmid < 1)startup_error_cleaner(4,"Erro no shmget");
 
     #ifdef DEBUG
     printf("Shared memory created!\n");
     #endif
 
     mem = (mem_struct*) shmat(shmid, NULL, 0);
-    if (mem < (mem_struct*) 1) exit(0);
+    if (mem < (mem_struct*) 1)startup_error_cleaner(5,"Erro no shmat");
     
     #ifdef DEBUG
     printf("Shared memory attached!\n");
@@ -750,30 +797,26 @@ int main(int argc, char const *argv[]){
 
     key_t key = ftok("user_console.c",'B');
     if (key==-1){
-        time(&t);
-        perror("Error on ftok key generation");
-        fprintf(log_file,"%s Error on ftok key generation: %s\n",ctime(&t),strerror(errno));
-        shmctl(shmid, IPC_RMID, NULL);
-        exit(0);
+        startup_error_cleaner(6,"Error on ftok key generation");
     }
     
     msqid = msgget(key,IPC_CREAT|0700);
     if(msqid == -1){
-        time(&t);
-        perror("Error Cannot get message queue");
-        fprintf(log_file,"%s Error Cannot get message queue: %s\n",ctime(&t),strerror(errno));
-        shmctl(shmid, IPC_RMID, NULL);
-        exit(0);
+        startup_error_cleaner(6,"Error Cannot get message queue");
     }
 
     sem_unlink("AVAILABLE_WORKERS");
 	available_workers_sem = sem_open("AVAILABLE_WORKERS",O_CREAT|O_EXCL,0700,config[1]);
+    if(available_workers_sem==SEM_FAILED)startup_error_cleaner(7,"Erro na abertura do semaforo AVAILABLE_WORKERS");
 	sem_unlink("SHM_MUTEX");
 	shm_mutex =sem_open("SHM_MUTEX",O_CREAT|O_EXCL,0700,1);
+    if(available_workers_sem==SEM_FAILED)startup_error_cleaner(8,"Erro na abertura do semaforo SHM_MUTEX");
 	sem_unlink("PRINT_MUTEX");
 	print_mutex =sem_open("PRINT_MUTEX",O_CREAT|O_EXCL,0700,1);
+    if(available_workers_sem==SEM_FAILED)startup_error_cleaner(9,"Erro na abertura do semaforo PRINT_MUTEX");
     sem_unlink("SENSOR_STATS_MUTEX");
 	sensor_stats_mutex =sem_open("SENSOR_STATS_MUTEX",O_CREAT|O_EXCL,0700,1);
+    if(available_workers_sem==SEM_FAILED)startup_error_cleaner(10,"Erro na abertura do semaforo SENSOR_STATS_MUTEX");
 
     struct sigaction new;
     new.sa_handler = handler;
@@ -797,10 +840,12 @@ int main(int argc, char const *argv[]){
             work(channels[i]);
             exit(0);
         }else if(pid ==-1){
-            char temp_s[100];
-            sprintf(temp_s,"Erro worker creation: %s",strerror(errno));
-            print(0,temp_s);
-            cleaner();
+            for (int j = 0; j < i+1; j++){
+                close(channels[j][1]);//close the unnamed pipes from the father side
+            }
+            kill(0,SIGTERM);//sends a kill signal to workers and to alerts_watcher
+            while(waitpid((pid_t)-1,NULL,0)>0);//waits for the workers to finish their job
+            startup_error_cleaner(11,"Erro worker creation");
         }
         close(channels[i][0]);
     }
@@ -814,28 +859,19 @@ int main(int argc, char const *argv[]){
         char temp_s[100];
         sprintf(temp_s,"Erro alert_watcher creation: %s",strerror(errno));
         print(0,temp_s);
-        cleaner();
+        kill(0,SIGKILL);
     }
     if ((mkfifo(CONSOLE_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
-        time(&t);
-        perror("Cannot create CONSOLE_PIPE");
-        fprintf(log_file,"%s Cannot create CONSOLE_PIPE: %s\n",ctime(&t),strerror(errno));
-        fclose(log_file);
-        fclose(config_file);
-        exit(0);
+        startup_error_cleaner(11,"Cannot create CONSOLE_PIPE");
     }
     if ((mkfifo(SENSOR_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
-        time(&t);
-        perror("Cannot create SENSOR_PIPE");
-        fprintf(log_file,"%s Cannot create SENSOR_PIPE: %s\n",ctime(&t),strerror(errno));
-        fclose(log_file);
-        fclose(config_file);
-        exit(0);
+        startup_error_cleaner(12,"Cannot create SENSOR_PIPE");
     }
     
     cur_queue_sz = 0;
 
     head = (INTERNAL_QUEUE_HEAD*)malloc(sizeof(INTERNAL_QUEUE_HEAD));
+    if(head==NULL)startup_error_cleaner(13,"Erro no malloc");
     head->start = NULL;
     head->end = NULL;
     
@@ -845,44 +881,42 @@ int main(int argc, char const *argv[]){
     INTERNAL_QUEUE *temp;
     return_value = pthread_create(&console_reader,NULL,console,NULL);
     if(return_value != 0){
-        print(0,strerror(return_value));
+        errno=return_value;
+        startup_error_cleaner(13,"Erro na criação da thread CONSOLE_READER");
     }
     return_value=pthread_create(&sensor_reader,NULL,sensor,NULL);
     if(return_value != 0){
-        print(0,strerror(return_value));
+        errno=return_value;
+        startup_error_cleaner(13,"Erro na criação da thread SENSOR_READER");
     }
     return_value=pthread_create(&dispatcher,NULL,dispatch,channels);
     if(return_value != 0){
-        print(0,strerror(return_value));
+        errno=return_value;
+        startup_error_cleaner(13,"Erro na criação da thread DISPATCHER");
     }
     pthread_join(console_reader,NULL);
     pthread_join(sensor_reader,NULL);
     pthread_join(dispatcher,NULL);
-    print(0,"Passou aqui");
     for (int i = 0; i < config[1]; i++){
         close(channels[i][1]);//close the unnamed pipes from the father side
     }
-    kill(0,SIGTERM);
-    return_value = unlink(CONSOLE_PIPE);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    print(0,"1");
+    kill(0,SIGTERM);//sends a kill signal to workers and to alerts_watcher
     return_value = close(console_fd);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"2");
-    return_value = unlink(SENSOR_PIPE);
+    return_value = unlink(CONSOLE_PIPE);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"3");
     return_value = close(sensor_fd);
     if(return_value==-1){
         print(0,strerror(errno));
     }
-    print(0,"4");
+    return_value = unlink(SENSOR_PIPE);
+    if(return_value==-1){
+        print(0,strerror(errno));
+    }
     while(waitpid((pid_t)-1,NULL,0)>0);//waits for the workers to finish their job, it may also wait for alerts_watcher
     return_value = sem_unlink("AVAILABLE_WORKERS");
     if(return_value==-1){
