@@ -75,7 +75,7 @@ int main(int argc, char const *argv[]){
    char temp[77];//tamanho da string + 10 caracteres que são o max espaço possível ocupado por um int + '/0' + 2*'#'
 
    while (1){
-    value = (rand()%(max-min+1))+min;
+    value = (rand()%(((long int)max)-((long int)min)+1))+min;
     sprintf(temp,"%s%d",string,value);
     write_return =  write(fd,&temp,strlen(temp)+1);//includes '\0'
     if(write_return==-1)printf("SENSOR_PIPE writing error\n");

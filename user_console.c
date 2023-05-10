@@ -17,7 +17,7 @@ João Querido  2021240660
 
 typedef struct {
 long mtype;
-char content[88];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces + '\n'
+char content[89];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces + '\n'
 }MSG;
 
 int fd,msqid;
@@ -47,6 +47,7 @@ void sigpipe_and_sigint_handler(int signo){
     close(fd);
     close(msqid);
     pthread_cancel(receiver);
+    pthread_join(receiver,NULL);
     exit(0);
 }
 int main(int argc, char const *argv[]){
@@ -88,7 +89,7 @@ int main(int argc, char const *argv[]){
     bool accepted;
     int write_return;
     const char car[] = " ";
-    char input[98];
+    char input[100];
     char output[123];//tamanho máx possível:id da consola(max 32 carac)#function()[0-6]#[id](max 32 caracteres)#[chave](max 32 caracteres)#
     //[min](inteiro 2^31, comprimento max = 10 caracteres)#[max](inteiro) + '/0'
     const char menu[]="-> exit - Sai do User Console\n-> stats - Apresenta estatísticas referentes aos dados enviados pelos sensores\n-> reset - Limpa todas as estatísticas calculadas até ao momento pelo sistema (relativa a todos os sensores, criados por qualquer User Console)\n-> sensors - Lista todos os Sensors que enviaram dados ao sistema\n-> add_alert [id] [chave] [min] [max] - Adiciona uma nova regra de alerta ao sistema\n-> remove_alert [id] - Remove uma regra de alerta do sistema\n-> list_alerts - Lista todas as regras de alerta que existem no sistema\n";
@@ -98,7 +99,7 @@ int main(int argc, char const *argv[]){
     #endif
     printf("%s",menu);
     while (1){
-        fgets(input,99,stdin);
+        fgets(input,100,stdin);
         if(strncmp("stats",input,5)==0){
             sprintf(output,"%s#1",argv[1]);
             accepted = 1;

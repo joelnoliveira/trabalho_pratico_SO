@@ -37,18 +37,18 @@ typedef struct INTERNAL_QUEUE_HEAD{
     INTERNAL_QUEUE *end;
 }INTERNAL_QUEUE_HEAD;
 typedef struct sensors_list{
-    char id[32];
+    char id[33];
 }sensors_list;
 typedef struct sensor_struct{
     bool alerted;//so the alert watcher can know if it already alerted that value
-    char key[32];
+    char key[33];
     int last_value,min,max,updates;
     double average;
 }sensor_struct;
 typedef struct alert_struct{
     int min,max,user_console_id;
-    char id[32];
-    char key[32];
+    char id[33];
+    char key[33];
 }alert_struct;
 typedef struct{
     int sensor_stats_count,sensor_count,alerts_count;
@@ -60,12 +60,12 @@ typedef struct{
 
 typedef struct {
 long mtype;
-char content[88];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces + '\n'
+char content[89];//id (max 32 char)+5*10 (max int = 10 char)+ 5 spaces
 }MSG;
 
 int console_fd,sensor_fd,cur_queue_sz,shmid,msqid;
 /// @brief QUEUE_SZ, N_WORKERS, MAX_KEYS, MAX_SENSORS, MAX_ALERTS
-int config[5],global_channel,worker_global_n;//for workers sigint treatment purposes
+int config[5],global_channel,worker_global_n;
 mem_struct* mem;
 sem_t *available_workers_sem,*shm_mutex,*print_mutex,*sensor_stats_mutex;
 pid_t main_process_id,alerts_watcher_process_id;
@@ -164,7 +164,7 @@ void handler(int signo){
         if (current_process!=alerts_watcher_process_id){
             char s[42];
             sem_wait(shm_mutex);
-            if(!*(mem->workers_array+worker_global_n)){//if worken is not working, then it can already exit
+            if(!*(mem->workers_array+worker_global_n)){//if worker is not working, then it can already exit
                 sprintf(s,"Worker %d exiting",worker_global_n);
                 print(0,s);
                 return_value = close(global_channel);
@@ -312,49 +312,44 @@ void error_sending(char id[]){
     print(0,temp);
     sem_wait(print_mutex);
 }
-void work_user(char s[]){
-    char *id,*s1;
-    char car[]="#";
-    MSG msg;
-    id = strtok(s,car);
-    msg.mtype = atol(id);
-    s1 = strtok(0,car);
-    if(strcmp(s1,"1")==0){
-        sensor_struct *ss;
+void stats(char *id,MSG msg){
+    sensor_struct *ss;
+    #ifdef DEBUG
+    sem_wait(print_mutex);
+    printf("Key Last Min Max Avg Count\n");
+    #endif
+    strcpy(msg.content,"Key Last Min Max Avg Count");
+    if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+        error_sending(id);
+    }
+    for(int i=0;i<config[2];i++){
+        ss = mem->sensor_stats_array+i;
+        if(i>= mem->sensor_stats_count)break;
         #ifdef DEBUG
-        sem_wait(print_mutex);
-        printf("Key Last Min Max Avg Count\n");
+        printf("%s %d %d %d %f %d\n",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
         #endif
-        strcpy(msg.content,"Key Last Min Max Avg Count");
+        sprintf(msg.content,"%s %d %d %d %f %d",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
         if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
             error_sending(id);
         }
-        for(int i=0;i<config[2];i++){
-            ss = mem->sensor_stats_array+i;
-            if(i>= mem->sensor_stats_count)break;
-            #ifdef DEBUG
-            printf("%s %d %d %d %f %d\n",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
-            #endif
-            sprintf(msg.content,"%s %d %d %d %f %d",ss->key,ss->last_value,ss->min,ss->max,ss->average,ss->updates);
-            if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
-                error_sending(id);
-            }
-        }
-        #ifdef DEBUG
-        sem_post(print_mutex);
-        #endif
-    }else if(strcmp(s1,"2")==0){
-        mem->sensor_count = 0;
-        mem->sensor_stats_count = 0;
-        #ifdef DEBUG
-        print(2,"OK");
-        #endif
-        strcpy(msg.content,"OK");
-        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
-            error_sending(id);
-        }
-    }else if(strcmp(s1,"3")==0){
-        sensors_list *sl;
+    }
+    #ifdef DEBUG
+    sem_post(print_mutex);
+    #endif
+}
+void reset_stats(char *id,MSG msg){
+    mem->sensor_count = 0;
+    mem->sensor_stats_count = 0;
+    #ifdef DEBUG
+    print(2,"OK");
+    #endif
+    strcpy(msg.content,"OK");
+    if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+        error_sending(id);
+    }
+}
+void sensors(char *id,MSG msg){
+    sensors_list *sl;
         #ifdef DEBUG
         sem_wait(print_mutex);
         printf("ID\n");
@@ -377,11 +372,13 @@ void work_user(char s[]){
         #ifdef DEBUG
         sem_post(print_mutex);
         #endif
-    }else if(strcmp(s1,"4")==0){
-        alert_struct *alert_p = mem->alerts_array;
-        int i;
+}
+void add_alert(char *id,MSG msg){
+    char *s1;
+    char car[]="#";
+    alert_struct *alert_p = mem->alerts_array;
         s1 = strtok(0,car);
-        for (i = 0; i < mem->alerts_count; i++){
+        for (int i = 0; i < mem->alerts_count; i++){
             if(strcmp((alert_p+i)->id,s1)==0){
                 sprintf(msg.content,"ERROR: %s alert id already exists",s1);
                 if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
@@ -389,10 +386,10 @@ void work_user(char s[]){
                 }
                 return;
             }
+            alert_p++;
         }
         // if not found and the number of alerts is within count then it can be added
-        if(i<=mem->alerts_count){
-            alert_p+=i;
+        if(mem->alerts_count+1<=config[4]){
             strcpy(alert_p->id,s1);
             s1 = strtok(0,car);
             strcpy(alert_p->key,s1);
@@ -413,38 +410,60 @@ void work_user(char s[]){
             }
             return;
         }
-    }else if(strcmp(s1,"5")==0){
-        alert_struct *alert_p = mem->alerts_array;
-        int i;
-        s1 = strtok(0,car);//alert id
-        for (i = 0; i < mem->alerts_count; i++){
-            if(strcmp((alert_p+i)->id,s1)==0){
-                *(alert_p+i) = *(alert_p+(mem->alerts_count-1));//copies the last alert on the list to the place where the alert was removed
-                mem->alerts_count--;
-                strcpy(msg.content,"OK");
-                if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
-                    error_sending(id);
-                }
-                return;
-            }
-        }
-        sprintf(msg.content,"ERRO: %s alert id doesn't exists",s1);
-        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
-            error_sending(id);
-        }
-    }else if(strcmp(s1,"6")==0){
-        alert_struct *alert_p = mem->alerts_array;
-        strcpy(msg.content,"ID Key MIN MAX");
-        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
-            error_sending(id);
-        }
-        for (int i = 0; i < mem->alerts_count; i++){
-            sprintf(msg.content,"%s %s %d %d",alert_p->id,alert_p->key,alert_p->min,alert_p->max);
+}
+void remove_alert(char *id,char *s1,MSG msg){
+    alert_struct *alert_p = mem->alerts_array;
+    int i;
+    for (i = 0; i < mem->alerts_count; i++){
+        if(strcmp((alert_p+i)->id,s1)==0){
+            *(alert_p+i) = *(alert_p+(mem->alerts_count-1));//copies the last alert on the list to the place where the alert was removed
+            mem->alerts_count--;
+            strcpy(msg.content,"OK");
             if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
                 error_sending(id);
             }
-            alert_p++; 
+            return;
         }
+    }
+    sprintf(msg.content,"ERRO: %s alert id doesn't exists",s1);
+    if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+        error_sending(id);
+    }
+}
+void list_alerts(char *id,MSG msg){
+    alert_struct *alert_p = mem->alerts_array;
+    strcpy(msg.content,"ID Key MIN MAX");
+    if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+        error_sending(id);
+    }
+    for (int i = 0; i < mem->alerts_count; i++){
+        sprintf(msg.content,"%s %s %d %d",alert_p->id,alert_p->key,alert_p->min,alert_p->max);
+        if(msgsnd(msqid,&msg,sizeof(msg)-sizeof(long),0)==-1){
+            error_sending(id);
+        }
+        alert_p++; 
+    }
+}
+void work_user(char s[]){
+    char *id,*s1;
+    char car[]="#";
+    MSG msg;
+    id = strtok(s,car);
+    msg.mtype = atol(id);
+    s1 = strtok(0,car);
+    if(strcmp(s1,"1")==0){
+        stats(id,msg);
+    }else if(strcmp(s1,"2")==0){
+        reset_stats(id,msg);
+    }else if(strcmp(s1,"3")==0){
+        sensors(id,msg);
+    }else if(strcmp(s1,"4")==0){
+        add_alert(id,msg);
+    }else if(strcmp(s1,"5")==0){
+        s1 = strtok(0,car);//alert id
+        remove_alert(id,s1,msg);
+    }else if(strcmp(s1,"6")==0){
+        list_alerts(id,msg);
     }else{
         char temp[200];
         sprintf(temp,"Error: BAD COMMAND: %s\n",s);
@@ -474,7 +493,7 @@ void work(int channel[]){
             print(2,"Worker a registar dados de sensor");
             #endif
             sem_wait(shm_mutex);
-            //sleep(worker_global_n+3);
+            sleep(worker_global_n+3);//it is not for sincronization, its only to simulate a longer work
             work_sensor(s);
             sem_post(shm_mutex);
         }else{//Dados de um user
@@ -482,7 +501,7 @@ void work(int channel[]){
             print(2,"User stuff\n");
             #endif
             sem_wait(shm_mutex);
-            //sleep(worker_global_n+3);
+            sleep(worker_global_n+3);//it is not for sincronization, its only to simulate a longer work
             work_user(s);
             sem_post(shm_mutex);
         }
@@ -618,9 +637,7 @@ void *dispatch(void *arg){
     char s[123];
     char temp[200];
     print(0,"Dispatch thread starting!");
-    //signal(SIGINT,SIG_IGN);
-    int x;
-
+    
     while (1){
         pthread_mutex_lock(&queue_mutex);
         while (cur_queue_sz < 1){
@@ -629,31 +646,31 @@ void *dispatch(void *arg){
             #endif
             pthread_cond_wait(&queue_empty_cond,&queue_mutex);
         }
-        x = pop_queue(s);
-        pthread_cond_signal(&queue_full_cond);
         pthread_mutex_unlock(&queue_mutex);
-        if(x){
-            #ifdef DEBUG
-            sprintf(temp,"Removed from queue: %s",s);
-            print(2,temp);
-            #endif
-            sem_wait(available_workers_sem);
-            for (int i = 0; i < config[1]; i++){
-                sem_wait(shm_mutex);//because of workers_array
-                if(!*(mem->workers_array+i)){//if worker not occupied
-                    *(mem->workers_array+i)=true;
-                    sem_post(shm_mutex);
-                    sprintf(temp,"DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d",s,i);
-                    print(0,temp);
-                    write(channels[i][1],s,strlen(s)+1);
-                    break;
-                }
-                sem_post(shm_mutex);
+        sem_wait(available_workers_sem);
+        for (int i = 0; i < config[1]; i++){
+            sem_wait(shm_mutex);//because of workers_array
+            if(!*(mem->workers_array+i)){//if worker not occupied
+                pthread_mutex_lock(&queue_mutex);
+                pop_queue(s);
+                pthread_cond_signal(&queue_full_cond);
+                pthread_mutex_unlock(&queue_mutex);
                 #ifdef DEBUG
-                sprintf(temp,"Worker %d is occupied!",i);\
+                sprintf(temp,"Removed from queue: %s",s);
                 print(2,temp);
                 #endif
+                *(mem->workers_array+i)=true;
+                sem_post(shm_mutex);
+                sprintf(temp,"DISPATCHER: %s SENT FOR PROCESSING ON WORKER %d",s,i);
+                print(0,temp);
+                write(channels[i][1],s,strlen(s)+1);
+                break;
             }
+            sem_post(shm_mutex);
+            #ifdef DEBUG
+            sprintf(temp,"Worker %d is occupied!",i);
+            print(2,temp);
+            #endif
         }
     }
     //waitpid(-1,NULL,0);
