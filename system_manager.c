@@ -101,32 +101,14 @@ void cleaner(){
     pthread_mutex_destroy(&queue_mutex);
     pthread_cond_destroy(&queue_full_cond);
     pthread_cond_destroy(&queue_empty_cond);
-    return_value = sem_close(available_workers_sem);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    return_value = sem_close(shm_mutex);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-
-    return_value = sem_close(sensor_stats_mutex);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-
-    return_value = shmdt(mem);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-
+    sem_close(available_workers_sem);
+    sem_close(shm_mutex);
+    sem_close(sensor_stats_mutex);
+    shmdt(mem);
     signal(SIGINT,SIG_IGN);
-    if(fclose(config_file)==EOF)print(0,strerror(errno));
-    if(fclose(log_file)==EOF)print(2,strerror(errno));
-    return_value = sem_close(print_mutex);
-    if(return_value==-1){
-        print(2,strerror(errno));
-    }
+    fclose(config_file);
+    fclose(log_file);
+    sem_close(print_mutex);
     exit(0);
 }
 void handler(int signo){
@@ -748,6 +730,7 @@ int main(int argc, char const *argv[]){
     time(&t);
     char *c=ctime(&t);
     c[strlen(c)-1]='\0';//deletes '\n'
+    printf("HOME_IOT SIMULATOR STARTING\n");
     fprintf(log_file,"%s HOME_IOT SIMULATOR STARTING\n",c);
     fflush(log_file);
     if (argc < 2){
@@ -861,9 +844,11 @@ int main(int argc, char const *argv[]){
         print(0,temp_s);
         kill(0,SIGKILL);
     }
+    unlink(CONSOLE_PIPE);
     if ((mkfifo(CONSOLE_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
         startup_error_cleaner(11,"Cannot create CONSOLE_PIPE");
     }
+    unlink(SENSOR_PIPE);
     if ((mkfifo(SENSOR_PIPE, O_CREAT|O_EXCL|0600)<0) && (errno!= EEXIST)) {
         startup_error_cleaner(12,"Cannot create SENSOR_PIPE");
     }
@@ -901,54 +886,26 @@ int main(int argc, char const *argv[]){
         close(channels[i][1]);//close the unnamed pipes from the father side
     }
     kill(0,SIGTERM);//sends a kill signal to workers and to alerts_watcher
-    return_value = close(console_fd);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    return_value = unlink(CONSOLE_PIPE);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    return_value = close(sensor_fd);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    return_value = unlink(SENSOR_PIPE);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
+    close(console_fd);
+    unlink(CONSOLE_PIPE);
+    close(sensor_fd);
+    unlink(SENSOR_PIPE);
     while(waitpid((pid_t)-1,NULL,0)>0);//waits for the workers to finish their job, it may also wait for alerts_watcher
-    return_value = sem_unlink("AVAILABLE_WORKERS");
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    return_value = sem_unlink("SHM_MUTEX");
-    if(return_value==-1){
-        printf("%s",strerror(errno));
-    }
-    return_value = sem_unlink("PRINT_MUTEX");
-    if(return_value==-1){
-        printf("%s",strerror(errno));
-    }
-    return_value = sem_unlink("SENSOR_STATS_MUTEX");
-    if(return_value==-1){
-        printf("%s",strerror(errno));
-    }
-    return_value = msgctl(msqid, IPC_RMID, NULL);
-    if(return_value==-1){
-        printf("%s",strerror(errno));
-    }
-    return_value = shmctl(shmid, IPC_RMID, NULL);
-    if(return_value==-1){
-        print(0,strerror(errno));
-    }
-    printf("%s\n","Cleanig INTERNAL_QUEUE");
+    sem_unlink("AVAILABLE_WORKERS");
+    sem_unlink("SHM_MUTEX");
+    sem_unlink("PRINT_MUTEX");
+    sem_unlink("SENSOR_STATS_MUTEX");
+    msgctl(msqid, IPC_RMID, NULL);
+    shmctl(shmid, IPC_RMID, NULL);
+    print(0,"Cleanig INTERNAL_QUEUE");
     while (head->start!=NULL){
         temp = head->start->next;
-        printf("%s\n",head->start->msg);
+        print(0,head->start->msg);
         free(head->start);
         head->start = temp;
     }
+    print(0,"INTERNAL QUEUE WAS CLEANED");
+    print(0,"HOME_IOT IS EXITING");
     free(head);
     cleaner();
     return 0;
