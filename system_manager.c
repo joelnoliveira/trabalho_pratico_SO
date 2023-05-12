@@ -97,7 +97,6 @@ void print(short int function,char s[]){
     sem_post(print_mutex);
 }
 void cleaner(){
-    int return_value;
     pthread_mutex_destroy(&queue_mutex);
     pthread_cond_destroy(&queue_full_cond);
     pthread_cond_destroy(&queue_empty_cond);
