@@ -24,7 +24,7 @@ João Querido  2021240660
 #define SENSOR_PIPE "SENSOR_PIPE"
 #define CONSOLE_PIPE "CONSOLE_PIPE"
 #define LOG_FILE "log.txt"
-#define DEBUG
+//#define DEBUG
 
 typedef struct INTERNAL_QUEUE{
     char msg[125];
