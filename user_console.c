@@ -52,7 +52,13 @@ void sigpipe_and_sigint_handler(int signo){
 }
 int main(int argc, char const *argv[]){
     //argv[1] = id
-
+    sigset_t mask;
+    sigfillset(&mask);//to block all signals
+    sigdelset(&mask,SIGINT);//dont block SIGINT
+    sigdelset(&mask,SIGPIPE);
+    sigprocmask(SIG_SETMASK, &mask, NULL);
+    signal(SIGINT,SIG_IGN);//ignores ctrl c
+    signal(SIGPIPE,SIG_IGN);
     if(argc < 2){
         printf("Sintaxe do comando a executar na linha de comando:\n$ user_console {identificador da consola}\n");
         exit(0);

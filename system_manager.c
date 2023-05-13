@@ -718,6 +718,11 @@ void startup_error_cleaner(int stage,char s[]){
     exit(0);
 }
 int main(int argc, char const *argv[]){
+    sigset_t mask;
+    sigfillset(&mask);//to block all signals
+    sigdelset(&mask,SIGINT);//dont block SIGINT
+    sigdelset(&mask,SIGTERM);
+    sigprocmask(SIG_SETMASK, &mask, NULL);
     signal(SIGINT,SIG_IGN);//ignores ctrl c
     signal(SIGTERM,SIG_IGN);
     log_file = fopen(LOG_FILE,"w");

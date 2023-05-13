@@ -23,6 +23,15 @@ void sigtstp_handler(){
     printf("Total mensagens enviadas: %d\n",msg_count);
 }
 int main(int argc, char const *argv[]){
+    sigset_t mask;
+    sigfillset(&mask);//to block all signals
+    sigdelset(&mask,SIGINT);//dont block SIGINT
+    sigdelset(&mask,SIGPIPE);
+    sigdelset(&mask,SIGTSTP);
+    sigprocmask(SIG_SETMASK, &mask, NULL);
+    signal(SIGINT,SIG_IGN);//ignores ctrl c
+    signal(SIGPIPE,SIG_IGN);
+    signal(SIGTSTP,SIG_IGN);
     /*
     *argv[1]= id;
     *argv[2]= sleep_time;
