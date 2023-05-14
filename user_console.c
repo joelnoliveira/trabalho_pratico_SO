@@ -24,12 +24,20 @@ int fd,msqid;
 pthread_t receiver;
 long mtype;
 
+void sigpipe_and_sigint_handler(int signo){
+    if(signo==SIGPIPE)printf("Error: Broken Pipe\n");
+    close(fd);
+    close(msqid);
+    pthread_cancel(receiver);
+    pthread_join(receiver,NULL);
+    exit(0);
+}
 void *receive(){
     MSG msg;
     while (1){
         if(msgrcv(msqid, &msg, sizeof(msg)-sizeof(long),mtype, 0)==-1){
             perror("Error reciving message");
-            exit(0);
+            sigpipe_and_sigint_handler(SIGTERM);
         }
         printf("%s\n",msg.content);
     }
@@ -41,14 +49,6 @@ void create_thread(){
     if(erro != 0){
         printf("%s\n",strerror(erro));
     }
-}
-void sigpipe_and_sigint_handler(int signo){
-    if(signo==SIGPIPE)printf("Error: Broken Pipe\n");
-    close(fd);
-    close(msqid);
-    pthread_cancel(receiver);
-    pthread_join(receiver,NULL);
-    exit(0);
 }
 int main(int argc, char const *argv[]){
     //argv[1] = id
@@ -75,6 +75,7 @@ int main(int argc, char const *argv[]){
     key_t key = ftok("user_console.c",'B');
     if (key==-1){
         perror("Error on ftok key generation");
+        close(fd);
         exit(0);
     }
     
